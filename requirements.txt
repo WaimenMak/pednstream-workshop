@@ -1,0 +1,12 @@
+# PedNStream itself. Pin to a tag or commit before the workshop so every
+# student gets the exact version you tested, e.g. ...PedNStream.git@v0.1.0
+pednstream @ git+https://github.com/WaimenMak/PedNStream.git
+
+# Used by pednstream but not (yet) declared in its pyproject.toml
+pyyaml
+pandas
+
+# Workshop
+matplotlib
+ipywidgets>=8
+jupyterlab

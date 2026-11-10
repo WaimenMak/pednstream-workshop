@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+outputs/
+.DS_Store
+
+# Facilitator answer key: keep private
+FACILITATOR.md
