@@ -86,6 +86,19 @@ run(links={"2_3": {"width": 4}})                         # widen the narrow corr
 compare({"name 1": res1, "name 2": res2})                # KPI table side by side
 ```
 
+`run()` is a thin wrapper. The same simulation in plain PedNStream (Part 1, section 0b):
+```python
+from pednstream.utils.network_env_generator import NetworkEnvGenerator
+from pednstream_workshop import DEFAULT_NETWORK
+
+gen = NetworkEnvGenerator()
+net = gen.create_network(str(DEFAULT_NETWORK), od_flows={(0, 5): 3, (0, 6): 1, (1, 5): 1, (1, 6): 1}, verbose=False)
+T = gen.config["params"]["simulation_steps"]
+for t in range(1, T):
+    net.network_loading(t)
+net.links[(2, 3)].density          # numpy array over time, one per directed corridor
+```
+
 **OD keys** are `"origin_destination"`: origins `0` (West Gate A) and `1` (South Gate B),
 destinations `5` (Platform X) and `6` (City Exit Y). The weights are **relative per origin**:
 `{"0_5": 3, "0_6": 1}` means 75% of Gate A's people want the Platform.

@@ -140,6 +140,68 @@ else:
     plt.xlim(0, 1); plt.yticks([]); plt.title("Gate A: Platform X (blue) / City Exit Y (orange)"); plt.show()'''),
     md("""
 > **Quick check:** weights 10 & 10 versus 1 & 1. Same result or different? Try it above.
+
+---
+## 0b · Under the hood: a PedNStream simulation in four steps
+Every ▶ button in this workshop calls `run(...)`, a thin wrapper around **PedNStream**. Here is the
+same simulation once in plain PedNStream code, so you know what each button does and can reuse it
+in your own work (Part 4 goes further). Run the four cells in order.
+
+**Step 1 · Describe the network.** A PedNStream network is a folder with a `sim_params.yaml`:
+the nodes and corridors, the link properties, the demand at each origin and the OD weights.
+"""),
+    code('''from pednstream.utils.network_env_generator import NetworkEnvGenerator
+from pednstream_workshop import DEFAULT_NETWORK      # the folder that holds Station Square
+
+print((DEFAULT_NETWORK / "sim_params.yaml").read_text())'''),
+    md("""
+**Step 2 · Build the network.** `NetworkEnvGenerator` reads the folder and creates a `Network`.
+You can override parts of the YAML from code. Here we set the **OD weights** with
+`od_flows={(origin, destination): weight}`.
+"""),
+    code('''gen = NetworkEnvGenerator()
+net = gen.create_network(
+    str(DEFAULT_NETWORK),
+    od_flows={(0, 5): 1, (0, 6): 1,     # Gate A: 50% to Platform X, 50% to City Exit Y
+              (1, 5): 1, (1, 6): 1},    # Gate B: the same
+    verbose=False,
+)
+T = gen.config["params"]["simulation_steps"]           # 300 steps of 10 s = 50 minutes
+print(f"Built a network with {len(net.nodes)} nodes and {len(net.links)} directed links; {T} time steps")'''),
+    md("""
+**Step 3 · Run it.** The simulation advances one time step per call of `network_loading(t)`.
+"""),
+    code('''for t in range(1, T):
+    net.network_loading(t)
+print("Done:", T - 1, "steps simulated")'''),
+    md("""
+**Step 4 · Read the results.** Every directed corridor `(u, v)` is a `Link` object in `net.links`
+with numpy arrays over time: `density`, `speed`, `num_pedestrians`, `inflow`, `outflow`,
+`cumulative_inflow`, `cumulative_outflow`, …
+"""),
+    code('''import numpy as np
+
+minutes = np.arange(T) * 10 / 60
+plt.figure(figsize=(8, 3))
+for (u, v) in [(0, 2), (1, 3), (2, 3), (3, 2), (2, 4)]:
+    plt.plot(minutes, net.links[(u, v)].density[:T], label=f"{u}→{v}")
+plt.axhline(2, ls="--", c="grey"); plt.xlabel("minute"); plt.ylabel("density (ped/m²)")
+plt.title("Density on a few corridors, read straight from PedNStream"); plt.legend(); plt.show()
+
+print("People who walked 3→5 into Platform X:", round(net.links[(3, 5)].cumulative_outflow[T - 1]))
+print("People who walked 4→6 into City Exit Y:", round(net.links[(4, 6)].cumulative_outflow[T - 1]))'''),
+    md("""
+**That's all `run()` does.** It repeats steps 1–3 with your settings and wraps the network in a
+`Result` that has the plotting helpers. Read its source below: `od` becomes `od_flows`,
+`links` becomes `link_params_overrides`, and so on.
+The PedNStream network is still inside every result as `result.network`, so you can always go back
+to the raw arrays, e.g. `base.network.links[(2, 3)].density`.
+"""),
+    code('''import inspect
+from pednstream_workshop import run
+print(inspect.getsource(run))'''),
+    md("""
+From here on we use the ▶ buttons so you can focus on the flows, not the code.
 """),
     form('''#@title ▶ Run the baseline (all weights equal) {display-mode: "form"}
 base = run()
