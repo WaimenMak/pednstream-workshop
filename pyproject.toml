@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pednstream-workshop"
+version = "1.0.0"
+description = "Workshop: how OD weights shape pedestrian flows, using PedNStream"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+  # PedNStream, pinned to the commit this workshop was tested with
+  "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@d7ecbda107eca41feb3844985bb22e736b06dbe2",
+  # used by pednstream but not (yet) declared in its pyproject.toml
+  "pyyaml",
+  "pandas",
+  "tqdm",
+  "matplotlib",
+]
+
+[project.optional-dependencies]
+# Live sliders in the playground. Not a hard dependency: Colab ships its own
+# ipywidgets version, and upgrading it there breaks widget rendering.
+widgets = ["ipywidgets"]
+
+[project.urls]
+Repository = "https://github.com/WaimenMak/pednstream-workshop"
+PedNStream = "https://github.com/WaimenMak/PedNStream"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pednstream_workshop"]

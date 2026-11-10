@@ -1,11 +1,10 @@
-"""Build the self-contained Google Colab notebooks in colab/.
+"""Build the workshop notebooks in notebooks/ (they work in Colab and Jupyter).
 
-Each notebook's first (hidden) cell installs PedNStream and writes
-workshop_tools.py + the network files, so a notebook works on its own:
-open it from GitHub, Drive, or by uploading it. No clone needed.
+The first code cell of every notebook is a normal `pip install` of the
+`pednstream-workshop` package, which pulls in PedNStream itself.
 
-Re-run after editing workshop_tools.py or the network:
-    python tools/build_colab.py
+Re-run after changing this file:
+    python tools/build_notebooks.py
 """
 
 from pathlib import Path
@@ -13,17 +12,12 @@ from pathlib import Path
 import nbformat as nbf
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "colab"
+OUT = ROOT / "notebooks"
 
-# Pin the exact PedNStream version the workshop was tested with.
-PEDNSTREAM_REF = "d7ecbda107eca41feb3844985bb22e736b06dbe2"
-PEDNSTREAM_PIP = f"git+https://github.com/WaimenMak/PedNStream.git@{PEDNSTREAM_REF}"
-
-EMBEDDED = {
-    "workshop_tools.py": (ROOT / "workshop_tools.py").read_text(),
-    "networks/station_square/sim_params.yaml": (ROOT / "networks/station_square/sim_params.yaml").read_text(),
-    "networks/station_square/node_positions.json": (ROOT / "networks/station_square/node_positions.json").read_text(),
-}
+# What students install. Pin to a tag (...git@v1.0) before the workshop so that
+# later pushes to main don't change what students get.
+WORKSHOP_PIP = "pednstream-workshop @ git+https://github.com/WaimenMak/pednstream-workshop.git"
+PEDNSTREAM_PIP = "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@d7ecbda107eca41feb3844985bb22e736b06dbe2"
 
 MAP = '''```
             6  City Exit (Y)
@@ -47,33 +41,27 @@ HOW_TO = """
 """
 
 
+SETUP_MD = """
+## ▶ Step 1: install (run this first, ≈30 s)
+This is how you install **any** Python package from GitHub. `pednstream-workshop` is a small
+package with this workshop's network and plotting helpers; installing it also installs
+**PedNStream** itself. If Colab restarted, run it again.
+You can ignore the note *"you may need to restart the kernel"*.
+"""
+
+
 def setup_cell(imports: str) -> str:
-    return f'''#@title ▶ **Run me first**: set up the workshop (≈30 s) {{ display-mode: "form" }}
-#@markdown Installs PedNStream and the workshop files. Run it again if Colab restarted.
-import importlib, os, subprocess, sys
-
-_FILES = {EMBEDDED!r}
-
-for _path, _text in _FILES.items():
-    os.makedirs(os.path.dirname(_path) or ".", exist_ok=True)
-    with open(_path, "w") as _f:
-        _f.write(_text)
-
-try:
-    import pednstream  # noqa: F401
-except ImportError:
-    print("Installing PedNStream …")
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "{PEDNSTREAM_PIP}"], check=True)
-    importlib.invalidate_caches()
-
-if "workshop_tools" in sys.modules:
-    importlib.reload(sys.modules["workshop_tools"])
+    return f'''%pip install -q "{WORKSHOP_PIP}"
 
 import matplotlib.pyplot as plt
-plt.rcParams["figure.dpi"] = 90
 {imports}
-_ok = run()
+plt.rcParams["figure.dpi"] = 90
 print("✅ Ready! Scroll down and continue.")'''
+
+
+def setup(imports: str):
+    """Markdown explanation plus the short, visible install cell."""
+    return [md(SETUP_MD), code(setup_cell(imports))]
 
 
 def md(s):
@@ -118,7 +106,7 @@ SCENARIOS = '''{
 # =============================================================================
 # 01 guided
 # =============================================================================
-write("01_od_weights_guided_colab.ipynb", [
+write("01_od_weights_guided.ipynb", [
     md(f"""
 # Part 1 · Where do people want to go?
 ### OD weights and how pedestrian flows spread through a network
@@ -128,7 +116,7 @@ Work in pairs: one person clicks, the other writes down predictions. Swap every 
 
 {HOW_TO}
 """),
-    form(setup_cell("from workshop_tools import run, compare, compare_maps, switch")),
+    *setup("from pednstream_workshop import run, compare, compare_maps, switch"),
     md(f"""
 ## 0 · Meet *Station Square*
 {MAP}
@@ -259,14 +247,14 @@ compare_maps({{"default": default, label: changed}}); plt.show()'''),
 # =============================================================================
 # 02 playground
 # =============================================================================
-write("02_playground_colab.ipynb", [
+write("02_playground.ipynb", [
     md(f"""
 # Part 2 · Playground
 Change any value in the form, press ▶, and compare. Each run simulates 50 minutes in under a second.
 {MAP}
 {HOW_TO}
 """),
-    form(setup_cell("from workshop_tools import run, compare, compare_maps, playground")),
+    *setup("from pednstream_workshop import run, compare, compare_maps, playground"),
     form('''#@title 🎛️ **Playground**: set the values, then press ▶ {display-mode: "form"}
 #@markdown ### OD weights (relative, per gate)
 A_to_Platform_X = 1  #@param {type:"slider", min:0, max:5, step:0.5}
@@ -323,7 +311,7 @@ display(res.animate(every=4))'''),
 # =============================================================================
 # 03 challenge
 # =============================================================================
-write("03_challenge_colab.ipynb", [
+write("03_challenge.ipynb", [
     md(f"""
 # Part 3 · Challenge: you are the station manager
 {MAP}
@@ -338,7 +326,7 @@ With signs, staff and app messages you can steer **which destination people from
 * Post your best valid score on the leaderboard.
 {HOW_TO}
 """),
-    form(setup_cell("from workshop_tools import run, compare, compare_maps")),
+    *setup("from pednstream_workshop import run, compare, compare_maps"),
     form('''#@title 🏆 **Your strategy**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
 share_of_Gate_A_sent_to_Platform = 0.6  #@param {type:"slider", min:0, max:1, step:0.05}
@@ -405,4 +393,226 @@ print(f"Best on this grid: A→X {shares[i]}, B→X {shares[j]}, score {scores[i
 """),
 ])
 
-print("Colab notebooks written to", OUT)
+# =============================================================================
+# 04 research
+# =============================================================================
+write("04_pednstream_in_your_research.ipynb", [
+    md("""
+# Part 4 · Using PedNStream in your own research
+
+In Parts 1–3 a helper package hid PedNStream behind sliders. Here we use **PedNStream directly**,
+the way you would in your own project: install it, describe a network in a YAML file, run it,
+and analyse the results with normal Python tools (numpy, pandas, matplotlib).
+
+You'll learn to:
+1. install PedNStream in any project,
+2. describe your **own network** in `sim_params.yaml`,
+3. run a simulation and read out densities and flows,
+4. change parameters from code, including your own demand pattern,
+5. run a **parameter sweep**, the bread and butter of a research study,
+6. save results and start from the workshop network.
+
+This notebook has normal code cells. Read them, run them, and change them!
+"""),
+    md("""
+## 1 · Install PedNStream
+In your own project this one line is all you need. It installs PedNStream from GitHub, pinned to an
+exact commit so your results stay reproducible. The extra packages are ones PedNStream uses but does
+not yet install by itself. (You can ignore the note *"you may need to restart the kernel"*.)
+"""),
+    code(f'''%pip install -q "{PEDNSTREAM_PIP}" pyyaml pandas tqdm
+
+import os, json
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+plt.rcParams["figure.dpi"] = 90
+os.makedirs("my_network", exist_ok=True)   # folder for the network we write next'''),
+    md("""
+## 2 · Describe a network
+A PedNStream network is a **folder** with a `sim_params.yaml` file (and optionally `node_positions.json`
+for plotting). Here's a small T-junction: people enter at node 0 and walk to node 2 (east) or node 3 (north).
+The north corridor 1–3 is narrow.
+
+```
+            3  North exit
+            |   (narrow, 1 m)
+   0 ────── 1 ────── 2  East exit
+ entrance
+```
+
+`%%writefile` saves the cell's text to a file. In a real project you would just edit the file.
+"""),
+    code('''%%writefile my_network/sim_params.yaml
+network:
+  adjacency_matrix: [        # 1 = a corridor between row-node and column-node
+    [0, 1, 0, 0],            # node 0 - node 1
+    [1, 0, 1, 1],            # node 1 - nodes 0, 2, 3
+    [0, 1, 0, 0],            # node 2 - node 1
+    [0, 1, 0, 0],            # node 3 - node 1
+  ]
+  origin_nodes: [0]
+  destination_nodes: [2, 3]
+
+simulation:
+  seed: 1
+  simulation_steps: 200      # 200 x 10 s = 33 min
+  unit_time: 10              # seconds per step
+  path_finder: {k_paths: 1}
+
+default_link:                # every corridor gets these unless overridden
+  length: 60                 # m
+  width: 3                   # m
+  free_flow_speed: 1.2       # m/s
+  k_critical: 2              # ped/m2
+  k_jam: 6                   # ped/m2
+
+links:
+  "1_3": {width: 1}          # the narrow north corridor
+
+demand:
+  origin_0: {pattern: "constant", base_lambda: 50}   # 50 people per step
+
+od_flows:                    # relative OD weights, as in Parts 1-3
+  "0_2": 1
+  "0_3": 1'''),
+    code('''positions = {"0": [0, 0], "1": [60, 0], "2": [120, 0], "3": [60, 60]}   # x, y in metres
+with open("my_network/node_positions.json", "w") as f:
+    json.dump(positions, f)
+print(os.listdir("my_network"))'''),
+    md("""
+## 3 · Run it
+Three steps: **load** the folder, **step** through time, **read** the results.
+`network_loading(t)` advances the simulation by one time step.
+"""),
+    code('''from pednstream.utils.network_env_generator import NetworkEnvGenerator
+
+gen = NetworkEnvGenerator()
+net = gen.create_network("my_network", verbose=False)   # load the folder
+T = gen.config["params"]["simulation_steps"]
+
+for t in range(1, T):                                   # run the simulation
+    net.network_loading(t)
+
+print("Corridors (directed):", list(net.links))'''),
+    md("""
+## 4 · Read the results
+Each directed corridor `(u, v)` is a `Link` object with numpy arrays over time:
+`density`, `speed`, `inflow`, `outflow`, `num_pedestrians`, `cumulative_inflow`, `cumulative_outflow`, …
+Put them in a pandas DataFrame and you can analyse them any way you like.
+"""),
+    code('''minutes = np.arange(T) * 10 / 60
+density = pd.DataFrame({f"{u}→{v}": link.density[:T] for (u, v), link in net.links.items()
+                        if link.density.max() > 0}, index=minutes)
+density.index.name = "minute"
+
+density.plot(figsize=(9, 3.5), ylabel="density (ped/m²)", title="Density per corridor")
+plt.axhline(2, ls="--", c="grey"); plt.show()
+density.describe().round(2)'''),
+    md("""
+## 5 · Change parameters from code
+You don't need a new YAML file for every experiment. `create_network` accepts overrides:
+
+| argument | changes | example |
+|---|---|---|
+| `od_flows` | OD weights | `{(0, 2): 1, (0, 3): 3}` |
+| `link_params_overrides` | corridor properties | `{"1_3": {"width": 2}}` |
+| `demand_params_overrides` | demand per origin | `{"origin_0": {"base_lambda": 80}}` |
+| `custom_demand_functions` | your own demand pattern | see below |
+
+A **custom demand pattern** is just a function that returns the number of arrivals per time step.
+Its name becomes the `pattern` you refer to:
+"""),
+    code('''def evening_rush(origin_id, params):
+    """10 people per step, with a rush of 70 between minutes 8 and 17."""
+    t = np.arange(params["simulation_steps"] + 1)
+    return np.where((t > 50) & (t < 100), 70, 10)
+
+def simulate(**overrides):
+    """Build a fresh network with the given overrides and run it to the end."""
+    gen = NetworkEnvGenerator()
+    net = gen.create_network("my_network", verbose=False, **overrides)
+    for t in range(1, gen.config["params"]["simulation_steps"]):
+        net.network_loading(t)
+    return net
+
+rush = simulate(custom_demand_functions=[evening_rush],
+                demand_params_overrides={"origin_0": {"pattern": "evening_rush"}},
+                od_flows={(0, 2): 1, (0, 3): 3})          # 75% want the narrow north exit
+
+plt.figure(figsize=(9, 3))
+plt.plot(minutes, rush.nodes[0].demand[:T], label="arrivals at entrance", c="grey")
+for (u, v) in [(0, 1), (1, 2), (1, 3)]:
+    plt.plot(minutes, rush.links[(u, v)].num_pedestrians[:T], label=f"people on {u}→{v}")
+plt.xlabel("minute"); plt.ylabel("people"); plt.legend(); plt.title("Evening rush, 75% to the north exit"); plt.show()'''),
+    md("""
+## 6 · A parameter sweep
+Research questions are usually *"how does output Y change with input X?"*. Loop over X, collect Y
+in a table, and plot it. Here: **how wide must the north corridor be** for a given share of people
+going north?
+"""),
+    code('''rows = []
+for share_north in [0.25, 0.5, 0.75]:
+    for width in [0.5, 1, 1.5, 2, 3]:
+        n = simulate(od_flows={(0, 2): 1 - share_north, (0, 3): share_north},
+                     link_params_overrides={"1_3": {"width": width}})
+        rows.append({
+            "share north": share_north,
+            "width 1_3 (m)": width,
+            "peak density on 0→1": n.links[(0, 1)].density.max(),
+            "peak density on 1→3": n.links[(1, 3)].density.max(),
+            "person-hours inside": sum(l.num_pedestrians[:T].sum() for l in n.links.values()) * 10 / 3600,
+        })
+sweep = pd.DataFrame(rows)
+
+for share, grp in sweep.groupby("share north"):
+    plt.plot(grp["width 1_3 (m)"], grp["person-hours inside"], marker="o", label=f"{share:.0%} go north")
+plt.xlabel("width of north corridor (m)"); plt.ylabel("person-hours inside"); plt.legend()
+plt.title("How wide is wide enough?"); plt.show()
+sweep.round(2)'''),
+    md("""
+**Try it:** add a third loop over `demand_params_overrides={"origin_0": {"base_lambda": ...}}`.
+At what demand does even a 3 m corridor jam?
+
+## 7 · Save results, or start from the workshop network
+`OutputHandler` writes a run to JSON files, so you can analyse it later or share it:
+"""),
+    code('''from pednstream.utils.output_handler import OutputHandler
+
+OutputHandler(base_dir="outputs", simulation_dir="evening_rush").save_network_state(rush)
+print(os.listdir("outputs/evening_rush"))
+
+saved = OutputHandler.load_simulation("outputs/evening_rush")
+print("saved corridors:", list(saved["link_data"])[:4], "…")'''),
+    md("""
+PedNStream's own `NetworkVisualizer` can draw any saved run at any time step (and animate it with
+`animate_network`):
+"""),
+    code('''import warnings
+from pednstream.utils.visualizer import NetworkVisualizer
+warnings.filterwarnings("ignore", category=RuntimeWarning)   # harmless arrow-drawing warning
+
+vis = NetworkVisualizer(simulation_dir="outputs/evening_rush", pos=positions)
+vis.visualize_network_state(time_step=90, edge_property="density");'''),
+    md("""
+The **Station Square** network from Parts 1–3 is also just a folder. Copy it and make it your own:
+"""),
+    code(f'''%pip install -q "{WORKSHOP_PIP}"
+import shutil
+from pednstream_workshop import DEFAULT_NETWORK
+
+shutil.copytree(DEFAULT_NETWORK, "my_station", dirs_exist_ok=True)
+print(open("my_station/sim_params.yaml").read()[:1200], "…")'''),
+    md("""
+## Where to go next
+* **PedNStream on GitHub:** https://github.com/WaimenMak/PedNStream. Its `examples/` folder has bigger
+  networks (a long corridor, a 9-node grid, Delft and Melbourne city centres).
+* **Your own network:** draw it, number the nodes, write the adjacency matrix, and start with one
+  origin and one destination before adding more.
+* **Reproducibility:** pin the PedNStream version (as in the install cell), fix `seed`, and keep your
+  `sim_params.yaml` under version control.
+* Using PedNStream in a paper? Cite it: see `CITATION.cff` in the PedNStream repository.
+"""),
+])
+
+print("Notebooks written to", OUT)

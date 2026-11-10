@@ -17,7 +17,7 @@ if missing:
 
 import matplotlib
 matplotlib.use("Agg")
-from workshop_tools import run
+from pednstream_workshop import run
 
 t0 = time.time()
 k = run().kpis()
