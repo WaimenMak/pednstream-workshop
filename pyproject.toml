@@ -10,8 +10,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
-  # PedNStream, pinned to the commit this workshop was tested with
-  "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@d7ecbda107eca41feb3844985bb22e736b06dbe2",
+  # PedNStream, pinned to the optimize_path commit this workshop was tested with
+  "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@65c2ff76767227983364e46eac519adf4c055087",
   # used by pednstream but not (yet) declared in its pyproject.toml
   "pyyaml",
   "pandas",

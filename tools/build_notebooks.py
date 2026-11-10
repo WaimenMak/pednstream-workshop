@@ -17,7 +17,7 @@ OUT = ROOT / "notebooks"
 # What students install. Pin to a tag (...git@v1.0) before the workshop so that
 # later pushes to main don't change what students get.
 WORKSHOP_PIP = "pednstream-workshop @ git+https://github.com/WaimenMak/pednstream-workshop.git"
-PEDNSTREAM_PIP = "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@d7ecbda107eca41feb3844985bb22e736b06dbe2"
+PEDNSTREAM_PIP = "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@65c2ff76767227983364e46eac519adf4c055087"
 
 MAP = '''```
             6  City Exit (Y)
