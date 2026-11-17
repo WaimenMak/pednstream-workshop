@@ -18,9 +18,10 @@ from .tools import (
     ramp,
     run,
     switch,
+    widen,
 )
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 __all__ = [
     "AMSTERDAM",
@@ -35,4 +36,5 @@ __all__ = [
     "ramp",
     "run",
     "switch",
+    "widen",
 ]

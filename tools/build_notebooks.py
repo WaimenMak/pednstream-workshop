@@ -33,21 +33,25 @@ MAP = '''```
 ```'''
 
 AMS_MAP = '''```
-  2 Westermarkt -------------- 9 Stationsplein --- 0 CENTRAAL STATION (start)
-  (Anne Frank)  \\               /         \\
-     |       Raadhuis-      DAMRAK         Zeedijk
-     |         straat    (20 m wide!)         \\
-     |              \\      /                   3 Nieuwmarkt
-  Prinsen-           1 Dam (Madame Tussauds)   |  Jodenbreestraat
-  gracht             |                         5 Waterlooplein (Rembrandthuis)
-     |         Kalverstraat (3 m)        Amstel/ |
-     |               |                   /     | Weteringschans
-     |               4 Muntplein -------+      |
-     |  Leidsestraat/  \\ Vijzelstraat          |
-     6 Leidseplein     7 Rijksmuseum ----------+
-              \\        /
-               8 MUSEUMPLEIN (event)
-```'''
+  2 Westermarkt ---Nieuwendijk/Leliegracht--- 9 Stationsplein --- 0 CENTRAAL STATION (start)
+  (Anne Frank)  \\                           /         \\
+     |       Raadhuisstraat           DAMRAK            Zeedijk
+     |         (3 m, trams)        (20 m wide!)            \\
+     |                 \\               /                   3 Nieuwmarkt
+  Prinsen-              1 Dam (Madame Tussauds)              |  Jodenbreestraat
+  gracht                |                                    5 Waterlooplein (Rembrandthuis)
+     |            Kalverstraat (3 m)              Amstel   / |
+     |                  |                 ---------------    | Utrechtsestraat
+     |                  4 Muntplein                          |
+     |   Leidsestraat /   \\ Vijzelstraat                      |
+     6 Leidseplein          10 Weteringcircuit --------------+  Weteringschans
+       |                     |  Stadhouderskade
+       |  Hobbemastraat      7 Rijksmuseum
+        \\                  /  passage
+          8 MUSEUMPLEIN (event)
+```
+The numbers are the main places. On the maps you'll also see small grey dots (11, 12, …): points along
+each street, about 300 m apart, so you can see *where* on a street a crowd builds up.'''
 
 HOW_TO = """
 **How to use this notebook**
@@ -446,7 +450,7 @@ The weights only *steer* people, so check what the simulation actually delivers.
 * Post your best valid score on the leaderboard.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan", min_version="1.2.0"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, widen", min_version="1.3.0"),
     form('''#@title 🏆 **Your strategy**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
 #@markdown Weight towards the Platform per gate (the rest of the weight goes to the City Exit)
@@ -525,23 +529,27 @@ A big open-air event starts on **Museumplein** and the trains bring thousands of
 the station towards the event. That is your lever: **you design the arrival pattern** for the first hour.
 
 The obvious way out is **Damrak**, past Madame Tussauds on the Dam: a *very* wide street (20 m),
-so it looks like it can take anyone. But south of the Dam everyone has to squeeze through the
-shopping streets. People choose their own route (shorter, wider and emptier streets are more attractive),
-just like in Part 1.
+so it looks like it can take anyone. But at the Dam everyone has to squeeze into the narrow
+**Kalverstraat** or the tram-filled **Raadhuisstraat** (both 3 m of usable width). People choose their own
+route (shorter, wider and emptier streets are more attractive), just like in Part 1.
+
+The streets, their lengths and the points along them come from **OpenStreetMap**, so the network
+follows the real city.
 
 ### Rules
 * You set the number of people per minute leaving the station for six 10-minute blocks (minute 0 to 60).
-* The simulation runs for **2 hours**. A walk on empty streets takes about **39 minutes**.
+* The simulation runs for **2 hours**. A walk on empty streets takes about **53 minutes** (about 3.5 km).
 * **Score = people who reach Museumplein − hours that people spend on the streets (person-hours).**
   Every visitor you deliver earns 1 point; every hour someone spends walking or waiting costs 1 point.
-  So a visitor whose trip takes longer than an hour costs more than they bring in. **Higher is better.**
+  So a visitor whose trip takes longer than an hour costs more than they bring in. With a 53-minute walk
+  there is not much room for queueing! **Higher is better.**
 * Post your best score on the leaderboard.
 """),
     md("""
 ## ▶ Step 2: load the Amsterdam tools (if you skipped Challenge 1, run Step 1 first)
 """),
     code('''import pandas as pd
-from pednstream_workshop import AMSTERDAM, arrival_plan
+from pednstream_workshop import AMSTERDAM, arrival_plan, widen
 print("✅ Amsterdam loaded.")'''),
     form('''#@title 🎟️ **Your arrival plan**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
@@ -553,15 +561,10 @@ minutes_30_40 = 300  #@param {type:"slider", min:0, max:900, step:30}
 minutes_40_50 = 300  #@param {type:"slider", min:0, max:900, step:30}
 minutes_50_60 = 300  #@param {type:"slider", min:0, max:900, step:30}
 #@markdown **Bonus round only**: widen one street by 2 m (leave at "none" for the main round)
-upgrade = "none"  #@param ["none", "Damrak", "Kalverstraat", "Raadhuisstraat", "Leidsestraat", "Vijzelstraat", "Zeedijk", "Haarlemmerstraat"]
+upgrade = "none"  #@param ["none", "Damrak", "Kalverstraat", "Raadhuisstraat", "Prinsengracht", "Leidsestraat", "Vijzelstraat", "Zeedijk", "Nieuwendijk / Leliegracht"]
 
 plan = [minutes_00_10, minutes_10_20, minutes_20_30, minutes_30_40, minutes_40_50, minutes_50_60]
-STREETS = {"Damrak": "1_9", "Kalverstraat": "1_4", "Raadhuisstraat": "1_2", "Leidsestraat": "4_6",
-           "Vijzelstraat": "4_7", "Zeedijk": "3_9", "Haarlemmerstraat": "2_9"}
-links = {}
-if upgrade != "none":
-    key = STREETS[upgrade]
-    links = {key: {"width": run(network_dir=AMSTERDAM).link(key).width + 2}}
+links = widen(upgrade, 2) if upgrade != "none" else {}   # +2 m along the whole street
 res = run(network_dir=AMSTERDAM, arrivals={0: arrival_plan(plan)}, links=links)
 last_plan = res   # remembered for the animation below
 k = res.kpis()
@@ -576,7 +579,7 @@ plans.append({"team": team_name, **{f"{10 * i}-{10 * i + 10}'": p for i, p in en
               "person-hours": round(hours), "score": round(score)})
 
 print(f"🚆 Sent {sent:,} people   🎨 {arrived:,} reached Museumplein   ⏱ {hours:,.0f} person-hours on the streets")
-print(f"   average trip: {60 * hours / max(sent, 1):.0f} min (empty streets: about 39 min)")
+print(f"   average trip: {60 * hours / max(sent, 1):.0f} min (empty streets: about 53 min)")
 print(f"\\n   SCORE = {score:,.0f}\\n")
 print(f"📋 Leaderboard line:  {team_name} | plan {plan} | upgrade {upgrade} | score {score:.0f}")
 res.dashboard(f"{team_name}: {plan} people/min", flow=True); plt.show()
@@ -597,19 +600,19 @@ else:
     display(last_plan.animate(every=max(1, round(minutes_per_frame * 6)), flow=True))'''),
     md("""
 ### Stuck? Hints (open one at a time)
-<details><summary>Hint 1</summary>Look at the <i>In and out</i> plot. However many people you send, the red line
-(arrivals per minute) never gets above a certain level. What is that level?</details>
-<details><summary>Hint 2</summary>Everyone you send faster than that level just waits somewhere. Where? Look at the
-map: which street is red? Is it the wide Damrak?</details>
-<details><summary>Hint 3</summary>People who leave the station late still need about 39 minutes to walk. Does
-sending a big group at minute 55 pay off?</details>
-<details><summary>Hint 4</summary>Your blocks don't have to be equal. Try a short pause to let the queue
-drain, or start strong and slow down.</details>
+<details><summary>Hint 1</summary>Look at the <i>In and out</i> plot. Does the red line (arrivals per minute)
+follow your blue blocks, about 53 minutes later? When does it stop following them?</details>
+<details><summary>Hint 2</summary>When too many people arrive at once, they wait somewhere. Where? Watch the
+animation: which street fills up first, and where does the queue go next? Is it the wide Damrak?</details>
+<details><summary>Hint 3</summary>Someone who leaves at minute 55 needs about 53 minutes on empty streets.
+Do they make it before the end (minute 120)? What if they have to queue?</details>
+<details><summary>Hint 4</summary>Your blocks don't have to be equal. A bigger group is fine as long as
+the queue it causes clears quickly. Is there a moment in the hour when nobody comes after them?</details>
 
 ---
 ### For coders (optional): let the computer search
 A simple *hill climb*: start from a plan, try moving each block up or down, keep any change that improves
-the score, and repeat with smaller steps. (≈1–2 minutes.) Can you beat it by hand? Can you write a better search?
+the score, and repeat with smaller steps. (≈2–3 minutes.) Can you beat it by hand? Can you write a better search?
 """),
     code('''def amsterdam_score(plan):
     k = run(network_dir=AMSTERDAM, arrivals={0: arrival_plan(plan)}).kpis()
@@ -634,7 +637,7 @@ for step in [120, 60, 30]:
 1. Describe your arrival plan in words a steward on the platform would understand.
 2. Why does it work? Name the street that decides how many people per minute can reach Museumplein.
 3. Damrak is 20 m wide. Did that help or hurt? What does a very wide street do to *where* people choose to walk?
-4. Almost nobody takes Zeedijk or the canals, even when the shopping streets are packed. Why might the
+4. Almost nobody takes Zeedijk and the eastern route past Waterlooplein, even when Kalverstraat is packed. Why might the
    model's route choice do that, and would real visitors behave the same way?
 5. In the bonus round, which street was worth widening, and was it worth more than a smart plan?
 """),

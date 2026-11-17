@@ -6,3 +6,6 @@ outputs/
 
 # Facilitator answer key: keep private
 FACILITATOR.md
+
+# OSM download cache for tools/build_amsterdam.py
+tools/.cache/

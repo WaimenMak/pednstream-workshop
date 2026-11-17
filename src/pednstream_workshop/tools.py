@@ -36,11 +36,13 @@ def _load_names(network_dir) -> dict:
     """names.json next to sim_params.yaml: display names per node (+ short names for KPIs)."""
     path = Path(network_dir) / "names.json"
     if not path.exists():
-        return {"names": {}, "short": {}, "streets": {}, "label_side": {}}
+        return {"names": {}, "short": {}, "streets": {}, "label_side": {}, "minor": set()}
     with open(path) as f:
         raw = json.load(f)
-    return {k: {(int(n) if "_" not in n else n): v for n, v in raw.get(k, {}).items()}
-            for k in ("names", "short", "streets", "label_side")}
+    out = {k: {(int(n) if "_" not in n else n): v for n, v in raw.get(k, {}).items()}
+           for k in ("names", "short", "streets", "label_side")}
+    out["minor"] = {int(n) for n in raw.get("minor", [])}  # points along a street: number only
+    return out
 
 
 NODE_NAMES = _load_names(DEFAULT_NETWORK)["names"]
@@ -86,6 +88,23 @@ def arrival_plan(per_minute: Iterable[float], block_minutes: float = 10, unit_ti
     for i, rate in enumerate(per_minute):
         arr[i * per_block:(i + 1) * per_block] = float(rate) * unit_time / 60
     return arr
+
+
+def widen(street: str, extra: float = 2, network_dir: Path | str = AMSTERDAM) -> Dict[str, Dict]:
+    """Link overrides that widen every stretch of a named street, for run(links=...).
+
+    Example: run(network_dir=AMSTERDAM, links=widen("Kalverstraat"), ...)
+    """
+    import yaml
+
+    streets = _load_names(network_dir)["streets"]
+    keys = [k for k, s in streets.items() if s == street]
+    if not keys:
+        raise ValueError(f"No street called {street!r}. Streets: {sorted(set(streets.values()))}")
+    with open(Path(network_dir) / "sim_params.yaml") as f:
+        cfg = yaml.safe_load(f)
+    default = cfg.get("default_link", {}).get("width", 0)
+    return {k: {"width": cfg.get("links", {}).get(k, {}).get("width", default) + extra} for k in keys}
 
 
 # ----------------------------------------------------------------------------
@@ -359,6 +378,10 @@ class Result:
         ax.add_collection(lc)
         label_box = dict(boxstyle="round,pad=0.15", fc="white", alpha=0.75, lw=0) if bg else None
         for n, (x, y) in self.pos.items():
+            if n in self.names["minor"]:
+                ax.scatter([x], [y], s=70, c="#757575", zorder=3, edgecolor="white", linewidths=0.5)
+                ax.text(x, y, str(n), color="white", fontsize=5, ha="center", va="center", zorder=4)
+                continue
             colour = "#2e7d32" if n in self.network.origin_nodes else "#c62828" if n in self.network.destination_nodes else "#424242"
             marker = "s" if n in self.network.origin_nodes else "D" if n in self.network.destination_nodes else "o"
             ax.scatter([x], [y], s=260, c=colour, marker=marker, zorder=3, edgecolor="white")
@@ -369,8 +392,11 @@ class Result:
                               "below": ((0, -12), "center", "top")}[side]
             ax.annotate(label, (x, y), xytext=offset, textcoords="offset points", fontsize=9, zorder=5,
                         ha=ha, va=va, bbox=label_box)
+        many = len(self.corridors) > 20   # big network: only label the crowded links
         for c, (u, v) in zip(self.corridors, (_parse_key(c) for c in self.corridors)):
             (x1, y1), (x2, y2) = self.pos[u], self.pos[v]
+            if many and self.density(c)[step] < 1:
+                continue
             ax.text((x1 + x2) / 2, (y1 + y2) / 2, f"{self.density(c)[step]:.1f}", fontsize=8, zorder=4,
                     ha="center", va="center", bbox=dict(boxstyle="round", fc="white", alpha=0.8, lw=0))
         ax.set_aspect("equal")
@@ -394,17 +420,25 @@ class Result:
         if ax is None:
             _, ax = plt.subplots(figsize=(9, 4))
         minutes = self.t * self.unit_time / 60
-        if corridors is None:
+        if corridors is None and self.names["streets"] and len(self.corridors) > 20:
+            # big network: one line per street (its most crowded link), busy streets only
+            by_street = {}
+            for c in self.corridors:
+                by_street.setdefault(self.names["streets"].get(c, c), []).append(self.density(c))
+            for street, dens in by_street.items():
+                worst = np.max(dens, axis=0)
+                if worst.max() > 0.1 * self.k_critical:
+                    ax.plot(minutes, worst, label=street)
+            corridors = []
+        elif corridors is None:
             corridors = self.corridors
-            if Path(self.network_dir) != DEFAULT_NETWORK:   # big network: only the busy ones
-                corridors = [c for c in corridors if self.density(c).max() > 0.1 * self.k_critical]
         for c in corridors:
             ax.plot(minutes, self.density(c), label=self.corridor_label(c))
         ax.axhline(self.k_critical, ls="--", c="grey", lw=1)
         ax.set_xlabel("minute")
         ax.set_ylabel("density (ped/m²)")
         ax.legend(ncol=4, fontsize=8)
-        ax.set_title(title or "Density per corridor")
+        ax.set_title(title or ("Density per street (most crowded stretch)" if not corridors else "Density per corridor"))
         return ax
 
     def people_on(self, key: str) -> np.ndarray:
