@@ -45,6 +45,7 @@ simulation:
   simulation_steps: 300  # 300 steps x 10 s = 50 minutes
   unit_time: 10          # seconds per step
   assign_flows_type: "classic"
+  od_tracking: true      # each person keeps their destination (OD pair) all the way
   path_finder:
     k_paths: 2     # each OD pair gets its 2 shortest routes
     temp: 5        # softmax temperature (lower = everyone picks the best route)
@@ -85,8 +86,8 @@ demand:
 # at a gate are drawn to each destination:
 #   0_5: 1, 0_6: 1  -> West Gate drawn equally to the Platform and the City Exit
 #   0_5: 3, 0_6: 1  -> three times as strongly to the Platform
-# PedNStream does not give each person a fixed destination: it re-applies these
-# weights at every junction, so the split that comes out can differ a little.
+# Each person who enters gets a destination drawn from these weights and keeps it
+# (od_tracking above), so the split that comes out is close to what they ask for.
 od_flows:
   "0_5": 1
   "0_6": 1

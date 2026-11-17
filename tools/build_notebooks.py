@@ -156,7 +156,7 @@ Work in pairs: one person clicks, the other writes down predictions. Swap every 
 
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, switch", min_version="1.4.0"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, switch", min_version="1.5.0"),
     md(f"""
 ## 0 · Meet *Station Square*
 {MAP}
@@ -169,7 +169,7 @@ Work in pairs: one person clicks, the other writes down predictions. Swap every 
 ## What is an OD weight?
 An **OD weight** says how strongly the people entering at a gate (the *origin*) are drawn to each
 *destination*. Weights are **relative**: `3` and `1` mean "three times as attracted to the Platform as
-to the City Exit". How *many* people enter is set by the gate's demand; the weights only steer them.
+to the City Exit". How *many* people enter is set by the gate's demand; the weights decide where they head.
 
 The cell below opens **only Gate A**, runs the simulation and counts where Gate A's people actually
 come out. Compare that with the split the weights ask for.
@@ -196,11 +196,11 @@ plt.title("Gate A: Platform X (blue) / City Exit Y (orange)"); plt.show()'''),
     md("""
 > **Quick check 1:** weights 10 & 10 versus 1 & 1. Same result or different?
 >
-> **Quick check 2:** try 1 & 0, then 3 & 1. The simulation is close to what the weights ask, but not
-> always exact. That's because PedNStream does **not** give each person a fixed destination.
-> At **every junction** it splits the crowd again, using the OD weights of the trips that pass through
-> that corridor. It also moves whole people per 10-second step. Keep this in mind: in this model the
-> weights *steer* people, and the simulation decides where they really end up.
+> **Quick check 2:** try 1 & 0, then 3 & 1. The simulation delivers (almost) exactly what the weights ask.
+> That's because PedNStream gives every person who enters a destination drawn from the OD weights and
+> **keeps track of it**: at every junction people turn towards their *own* destination. The small
+> differences come from moving whole people per 10-second step. Keep this in mind: in this model the
+> weights decide **where** people go; the simulation decides **how** (which route) and **when** they get there.
 
 ---
 ## 0b · Under the hood: a PedNStream simulation in four steps
@@ -314,9 +314,9 @@ display(crossing.link_table())'''),
 **Discuss**
 1. Destination totals are identical, yet one scenario costs much more. Explain why in one sentence, using *route overlap* or *counter-flow*.
 2. Knowing only "50% go to the Platform", could you have predicted the congestion?
-3. Look at *reached Platform X* in the table. The two scenarios don't deliver exactly the same totals.
-   Where do the two gates' walkers share a corridor in the crossing scenario? *(Hint: corridor 2_4, then the Mall Junction.)*
-   What happens there if the model doesn't know where each person is heading?
+3. Look at *reached Platform X* in the table: both scenarios deliver (almost) the same totals, so the whole
+   difference is in *how* people get there. In the crossing scenario, which corridors do the two gates'
+   walkers share, and do they walk in the same direction? *(Hint: the corridor table above.)*
 
 ---
 ## Exercise 3 · Destinations that change over time
@@ -336,8 +336,9 @@ display(compare({"baseline": base, f"announced at min {announcement_minute}": an
     md("""
 **Discuss**
 1. Look at the vertical line. Do the corridors react with a delay, or all at once?
-2. PedNStream applies the **current** OD weights at every junction, so people already inside "re-decide" at their next junction.
-   Is that realistic for a loudspeaker announcement? For a departure board visible only at the entrance?
+2. In PedNStream every person keeps the destination they got at the gate, so only people who enter
+   **after** the announcement head for the Platform. Is that realistic for a departure board visible only
+   at the entrance? For a loudspeaker announcement that everyone inside hears?
 3. Try the announcement at minute **17** (the peak) and at minute **35**. Does *timing* matter as much as *size*?
 
 ---
@@ -381,7 +382,7 @@ Change any value in the form, press ▶, and compare. Each run simulates 50 minu
 {MAP}
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, playground", min_version="1.4.0"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, playground", min_version="1.5.0"),
     form('''#@title 🎛️ **Playground**: set the values, then press ▶ {display-mode: "form"}
 #@markdown ### OD weights (relative, per gate)
 A_to_Platform_X = 1  #@param {type:"slider", min:0, max:5, step:0.5}
@@ -446,7 +447,8 @@ write("03_challenge.ipynb", [
 {MAP}
 With signs, staff and app messages you can steer **which destination people from each gate head for**
 (think *"Platform entrance via the South Gate"*). In model terms: **you choose the OD weights.**
-The weights only *steer* people, so check what the simulation actually delivers.
+Each person keeps the destination your weights give them, but check what the simulation actually
+delivers: people still walking when the clock stops don't count.
 
 ### Rules
 * Gate demand is fixed.
@@ -456,7 +458,7 @@ The weights only *steer* people, so check what the simulation actually delivers.
 * Post your best valid score on the leaderboard.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, widen", min_version="1.4.0"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, widen", min_version="1.5.0"),
     form('''#@title 🏆 **Your strategy**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
 #@markdown Weight towards the Platform per gate (the rest of the weight goes to the City Exit)
@@ -495,7 +497,7 @@ display(pd.DataFrame(attempts).sort_values(["valid", "score"], ascending=[False,
 <details><summary>Hint 1</summary>Look at the map of your strategy: which corridors are red, and which OD groups walk through them?</details>
 <details><summary>Hint 2</summary>Gate B has only <b>one</b> route to the Platform, and it shares nothing with Gate A's routes.</details>
 <details><summary>Hint 3</summary>Remember Exercise 2: the crossing pattern was expensive, the parallel one was cheap.</details>
-<details><summary>Hint 4</summary>Just missed 60%? The weights steer, the simulation decides. Nudge one weight up a little.</details>
+<details><summary>Hint 4</summary>Just missed 60%? A few people are still walking when the clock stops, and whole people are moved per step. Nudge one weight up a little.</details>
 
 ---
 ### For coders (optional): search systematically
@@ -714,6 +716,7 @@ simulation:
   seed: 1
   simulation_steps: 200      # 200 x 10 s = 33 min
   unit_time: 10              # seconds per step
+  od_tracking: true          # each person keeps their destination all the way
   path_finder: {k_paths: 1}
 
 default_link:                # every corridor gets these unless overridden
