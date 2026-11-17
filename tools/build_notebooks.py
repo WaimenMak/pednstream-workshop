@@ -67,18 +67,31 @@ You can ignore the note *"you may need to restart the kernel"*.
 """
 
 
-def setup_cell(imports: str) -> str:
-    return f'''%pip install -q "{WORKSHOP_PIP}"
+def setup_cell(imports: str, min_version: str = "") -> str:
+    if not min_version:
+        return f'''%pip install -q "{WORKSHOP_PIP}"
 
 import matplotlib.pyplot as plt
 {imports}
 plt.rcParams["figure.dpi"] = 90
 print("✅ Ready! Scroll down and continue.")'''
+    # pip skips the install when the same version is already there, and Python keeps an
+    # already-imported old copy until the session restarts, so check what got loaded.
+    return f'''%pip install -q "{WORKSHOP_PIP}"
+
+import matplotlib.pyplot as plt
+import pednstream_workshop
+if tuple(map(int, pednstream_workshop.__version__.split("."))) < {tuple(map(int, min_version.split(".")))}:
+    raise RuntimeError("An old version of the workshop package is loaded. "
+                       "Click Runtime → Restart session, then run this cell again.")
+{imports}
+plt.rcParams["figure.dpi"] = 90
+print("✅ Ready! Scroll down and continue.")'''
 
 
-def setup(imports: str):
+def setup(imports: str, min_version: str = ""):
     """Markdown explanation plus the short, visible install cell."""
-    return [md(SETUP_MD), code(setup_cell(imports))]
+    return [md(SETUP_MD), code(setup_cell(imports, min_version))]
 
 
 def md(s):
@@ -433,7 +446,7 @@ The weights only *steer* people, so check what the simulation actually delivers.
 * Post your best valid score on the leaderboard.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan", min_version="1.1.0"),
     form('''#@title 🏆 **Your strategy**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
 #@markdown Weight towards the Platform per gate (the rest of the weight goes to the City Exit)
