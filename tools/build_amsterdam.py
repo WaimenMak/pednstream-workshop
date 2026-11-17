@@ -1,79 +1,100 @@
-"""Build the Amsterdam challenge network from the OpenStreetMap walking network.
+"""Build the Amsterdam challenge network directly from the OpenStreetMap walking network.
 
-Each corridor of the challenge (e.g. Damrak from Stationsplein to the Dam) is routed over
-the real OSM walking network, preferring the named street(s), and split into pieces of
-about SEGMENT metres. Every split point becomes a PedNStream node, so the network follows
-the streets and a queue can be seen growing back along a street.
+Every walkable street, square and footpath between Centraal Station and Museumplein becomes
+part of the PedNStream network: no hand-picked corridors. The steps follow the
+build-pedestrian-dataset workflow:
+
+  1. download the OSM walk network for the area (cached in tools/.cache/, git-ignored);
+  2. keep a band of BAND metres around the straight line Stationsplein -> Museumplein;
+  3. merge the nodes of one intersection (osmnx consolidate_intersections, in metres);
+  4. merge parallel ways between the same two junctions (street + sidewalks = one corridor,
+     widths added up) and drop dead ends, which no route can use;
+  5. give every corridor its OSM length, and a width from the OSM `width` tag or from the
+     street type (WIDTH below); Damrak is set very wide on purpose (DAMRAK_WIDTH);
+  6. add the station itself (node 0) with a short, wide hall to Stationsplein, so the
+     station has exactly one exit.
 
 Writes, in src/pednstream_workshop/networks/amsterdam/:
-  sim_params.yaml       the PedNStream network (adjacency, link lengths/widths, settings)
-  node_positions.json   node -> [x, y] in Web Mercator metres (EPSG:3857)
-  names.json            node and street names for the plots
+  adj_matrix.npy        binary adjacency matrix (PedNStream loads it when the YAML has none)
+  edge_distances.pkl    {(u, v): length in m}, both directions
+  sim_params.yaml       simulation settings, corridor widths, demand and OD
+  node_positions.json   node -> [x, y] in Web Mercator metres (EPSG:3857), for the plots
+  names.json            names of the main places and the street name of every corridor
   background.jpg/.json  faded OpenStreetMap background (only with --refresh-map or if missing)
 
 Needs `pip install osmnx contextily` (facilitators only; students never run this):
     python tools/build_amsterdam.py [--refresh-map]
-The OSM walking network is cached in tools/.cache/ (git-ignored).
 """
 
 import json
 import math
+import pickle
+import re
 import sys
 from pathlib import Path
 
 import networkx as nx
 import numpy as np
 import osmnx as ox
+from shapely.geometry import Point
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "src" / "pednstream_workshop" / "networks" / "amsterdam"
 CACHE = ROOT / "tools" / ".cache" / "amsterdam_walk.graphml"
 BBOX = (4.876, 52.354, 4.908, 52.382)  # left, bottom, right, top
 USER_AGENT = "pednstream-workshop-network-builder/1.0"
-SEGMENT = 300  # m, target length of one link
-PREFER = 0.5   # edges on the named street count as this fraction of their length
 
-# Main places (latitude, longitude). Snapped to the nearest walkable OSM node.
-PLACES = {
-    0: ("Centraal Station", (52.3789, 4.9001)),
-    9: ("Stationsplein", (52.3772, 4.8985)),
-    1: ("Dam (Madame Tussauds)", (52.3730, 4.8932)),
-    2: ("Westermarkt (Anne Frank)", (52.3750, 4.8837)),
-    3: ("Nieuwmarkt", (52.3727, 4.9005)),
-    4: ("Muntplein", (52.3667, 4.8936)),
-    5: ("Waterlooplein (Rembrandthuis)", (52.3678, 4.9026)),
-    6: ("Leidseplein", (52.3642, 4.8826)),
-    7: ("Rijksmuseum", (52.3604, 4.8853)),  # north end of the passage
-    8: ("Museumplein", (52.3577, 4.8830)),
-    10: ("Weteringcircuit", (52.3597, 4.8905)),
+BAND = 650        # m on each side of the line Stationsplein -> Museumplein
+MERGE = 20        # m, nodes closer than this form one intersection
+DROP = {"busway", "elevator", "service"}  # bus lanes, lifts and service alleys are not walking routes
+WIDTH = {         # effective walking width (m) per OSM highway type, when the way has no width tag
+    "pedestrian": 6, "living_street": 4, "footway": 2.5, "steps": 2, "path": 2, "cycleway": 1.5,
+    "residential": 2.5, "unclassified": 2.5, "tertiary": 3.5, "tertiary_link": 3.5,
+    "secondary": 4, "primary": 4,
 }
-ORIGIN, DESTINATION = 0, 8
+MAX_WIDTH = 12    # cap for streets with many parallel ways (except Damrak)
+DAMRAK_WIDTH = 20
+SQUARE_WIDTH = 10  # Museumplein is an open square: its paths into the destination are at least this wide
 
-# (from, to, street label, OSM street names to prefer, effective width in m[, via (lat, lon) points])
-CORRIDORS = [
-    (9, 1, "Damrak", ["Damrak"], 20),
-    (9, 2, "Nieuwendijk / Leliegracht", [], 3, [(52.3759, 4.8900), (52.3756, 4.8862)]),  # via Torensluis
-    (9, 3, "Zeedijk", ["Zeedijk"], 3),
-    (1, 2, "Raadhuisstraat", ["Raadhuisstraat"], 3),  # trams in the middle, narrow pavements
-    (1, 4, "Kalverstraat", ["Kalverstraat"], 3),
-    (2, 6, "Prinsengracht", ["Prinsengracht"], 4),
-    (3, 5, "Jodenbreestraat", ["Sint Antoniesbreestraat", "Jodenbreestraat"], 5),
-    (4, 5, "Amstel", ["Amstel"], 5),
-    (4, 6, "Leidsestraat", ["Heiligeweg", "Koningsplein", "Leidsestraat"], 2.5),
-    (4, 10, "Vijzelstraat", ["Vijzelstraat", "Vijzelgracht"], 4),
-    (5, 10, "Utrechtsestraat / Weteringschans", ["Utrechtsestraat", "Weteringschans"], 4,
-     [(52.3612, 4.8993)]),  # via Frederiksplein
-    (10, 7, "Stadhouderskade", ["Stadhouderskade", "Weteringschans"], 5),
-    (6, 8, "Hobbemastraat", ["Hobbemastraat", "Stadhouderskade"], 6),
-    (7, 8, "Rijksmuseum passage", [], 5),
+# Main places (latitude, longitude): they get the low node numbers and a label on the map.
+PLACES = [
+    ("Centraal Station", (52.3800, 4.9015)),   # 0: the station itself (origin), drawn inside the building
+    ("Stationsplein", (52.3787, 4.8998)),      # 1: in front of the station, where Damrak starts
+    ("Dam (Madame Tussauds)", (52.3730, 4.8932)),
+    ("Spui", (52.3685, 4.8897)),
+    ("Muntplein", (52.3667, 4.8936)),
+    ("Leidseplein", (52.3642, 4.8826)),
+    ("Rembrandtplein", (52.3661, 4.8966)),
+    ("Weteringcircuit", (52.3597, 4.8905)),
+    ("Rijksmuseum", (52.3604, 4.8853)),
+    ("Museumplein", (52.3577, 4.8830)),        # destination
 ]
-STATION_HALL = (0, 9, "station hall", 100, 30)  # not routed: inside the station
-LABEL_SIDE = {"9": "left", "4": "left", "5": "left", "3": "below"}
+DESTINATION = len(PLACES) - 1
+LABEL_SIDE = {"1": "left", "3": "left", "8": "left"}
 
 
 def mercator(lat, lon):
     r = 6378137.0
-    return [r * math.radians(lon), r * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))]
+    return r * math.radians(lon), r * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
+
+
+def as_set(value):
+    if isinstance(value, list):
+        return set(value)
+    return {value} if isinstance(value, str) and value else set()
+
+
+FOOT = {"footway", "pedestrian", "path", "steps", "cycleway", "living_street"}
+
+
+def way_width(d):
+    """Width of one OSM way: the width tag of a footpath, else the default of its type.
+    (On a road the width tag is the carriageway, not the space for walking.)"""
+    for w in as_set(d.get("width")) if as_set(d.get("highway")) <= FOOT else ():
+        m = re.match(r"\s*([\d.]+)", w)
+        if m and 0.5 <= float(m.group(1)) <= 30:
+            return float(m.group(1))
+    return max((WIDTH.get(h, 2.5) for h in as_set(d.get("highway"))), default=2.5)
 
 
 def load_graph():
@@ -82,100 +103,130 @@ def load_graph():
         ox.settings.requests_timeout = 300
         CACHE.parent.mkdir(parents=True, exist_ok=True)
         ox.save_graphml(ox.graph_from_bbox(BBOX, network_type="walk"), CACHE)
-    return nx.Graph(ox.load_graphml(CACHE))  # undirected: people walk both ways
-
-
-def edge_names(data):
-    name = data.get("name", "")
-    return set(name) if isinstance(name, list) else {name}
-
-
-def route(G, stops, prefer):
-    def weight(u, v, d):
-        return d["length"] * (PREFER if edge_names(d) & set(prefer) else 1.0)
-    path = [stops[0]]
-    for a, b in zip(stops, stops[1:]):
-        path += nx.shortest_path(G, a, b, weight=weight)[1:]
-    cum = np.concatenate([[0], np.cumsum([G.edges[u, v]["length"] for u, v in zip(path, path[1:])])])
-    return path, cum
+    return ox.load_graphml(CACHE)
 
 
 def main():
     G = load_graph()
-    xs = [G.nodes[n]["x"] for n in G.nodes]
-    ys = [G.nodes[n]["y"] for n in G.nodes]
-    ids = list(G.nodes)
+    print(f"OSM walk network: {G.number_of_nodes()} nodes, {G.number_of_edges()} directed ways")
+
+    # 1. walking ways only, projected to metres (UTM)
+    G = G.edge_subgraph([(u, v, k) for u, v, k, d in G.edges(keys=True, data=True)
+                         if not as_set(d.get("highway")) & DROP]).copy()
+    P = ox.project_graph(G)
+    crs = P.graph["crs"]
+
+    def to_utm(lat, lon):
+        return ox.projection.project_geometry(Point(lon, lat), to_crs=crs)[0].coords[0]
+
+    def to_latlon(x, y):
+        lon, lat = ox.projection.project_geometry(Point(x, y), crs=crs, to_latlong=True)[0].coords[0]
+        return lat, lon
+
+    # 2. the band around the line Stationsplein -> Museumplein
+    a, b = np.array(to_utm(*PLACES[1][1])), np.array(to_utm(*PLACES[DESTINATION][1]))
+
+    def dist_to_line(x, y):
+        p, ab = np.array([x, y]) - a, b - a
+        t = np.clip(p @ ab / (ab @ ab), 0, 1)
+        return np.linalg.norm(p - t * ab)
+    P = P.subgraph([n for n, d in P.nodes(data=True) if dist_to_line(d["x"], d["y"]) <= BAND]).copy()
+
+    # 3. one node per intersection
+    C = ox.consolidate_intersections(P, tolerance=MERGE, rebuild_graph=True, dead_ends=False,
+                                     reconnect_edges=True)
+
+    # 4. one corridor per pair of junctions: parallel ways (street + sidewalks) add their widths
+    U = nx.Graph()
+    for u, v, d in ox.convert.to_undirected(C).edges(data=True):
+        if u == v:
+            continue
+        w, names = way_width(d), as_set(d.get("name"))
+        if U.has_edge(u, v):
+            e = U.edges[u, v]
+            e["length"] = min(e["length"], float(d["length"]))
+            e["width"] += w
+            e["names"] |= names
+        else:
+            U.add_edge(u, v, length=float(d["length"]), width=w, names=set(names))
+    for n in U.nodes:
+        U.nodes[n].update(x=C.nodes[n]["x"], y=C.nodes[n]["y"])
+    U = U.subgraph(max(nx.connected_components(U), key=len)).copy()
 
     def nearest(lat, lon):
-        return ids[int(np.argmin((np.array(xs) - lon) ** 2 + (np.array(ys) - lat) ** 2))]
+        x, y = to_utm(lat, lon)
+        return min(U.nodes, key=lambda n: (U.nodes[n]["x"] - x) ** 2 + (U.nodes[n]["y"] - y) ** 2)
+    place_node = {i: nearest(*ll) for i, (_, ll) in enumerate(PLACES) if i > 0}
+    assert len(set(place_node.values())) == len(place_node), "two places snapped to the same node"
 
-    osm_of = {n: nearest(*ll) for n, (_, ll) in PLACES.items()}
-    lonlat = {n: (G.nodes[o]["x"], G.nodes[o]["y"]) for n, o in osm_of.items()}
-    names = {n: name for n, (name, _) in PLACES.items()}
-    links, streets, minor = [], {}, []
-    next_id = max(PLACES) + 1
+    # dead ends can never be on a route between the station and Museumplein
+    keep = set(place_node.values())
+    while dead := [n for n in U.nodes if U.degree(n) <= 1 and n not in keep]:
+        U.remove_nodes_from(dead)
 
-    for u, v, label, prefer, width, *via in CORRIDORS:
-        stops = [osm_of[u]] + [nearest(*ll) for ll in (via[0] if via else [])] + [osm_of[v]]
-        path, cum = route(G, stops, prefer)
-        total = cum[-1]
-        pieces = max(1, int(round(total / SEGMENT)))
-        chain, cuts = [u], [0.0]
-        for k in range(1, pieces):
-            i = int(np.argmin(np.abs(cum - k * total / pieces)))
-            if 0 < i < len(path) - 1 and cum[i] > cuts[-1] + 50:
-                n = next_id
-                next_id += 1
-                lonlat[n] = (G.nodes[path[i]]["x"], G.nodes[path[i]]["y"])
-                names[n] = f"{label} ({len(chain)})"
-                minor.append(n)
-                chain.append(n)
-                cuts.append(cum[i])
-        chain.append(v)
-        cuts.append(total)
-        for (a, b), length in zip(zip(chain, chain[1:]), np.diff(cuts)):
-            key = f"{min(a, b)}_{max(a, b)}"
-            links.append((key, round(float(length)), width, label))
-            streets[key] = label
-        print(f"{label:22s} {u}->{v}: {total:5.0f} m in {len(chain) - 1} links via {chain}")
+    # 5. number the nodes: main places first, then the rest from north to south
+    rest = sorted((n for n in U.nodes if n not in keep), key=lambda n: (-U.nodes[n]["y"], U.nodes[n]["x"]))
+    order = [None] + [place_node[i] for i in range(1, len(PLACES))] + rest
+    idx = {n: i for i, n in enumerate(order) if n is not None}
+    N = len(order)
 
-    a, b, label, length, width = STATION_HALL
-    links.insert(0, (f"{a}_{b}", length, width, label))
-    streets[f"{a}_{b}"] = label
-    lonlat[0] = PLACES[0][1][::-1]  # the station itself is not on the walking network
+    adj = np.zeros((N, N), dtype=np.int8)
+    dist, widths, streets = {}, {}, {}
 
-    n_nodes = next_id
-    adj = np.zeros((n_nodes, n_nodes), dtype=int)
-    for key, *_ in links:
-        a, b = map(int, key.split("_"))
-        adj[a, b] = adj[b, a] = 1
+    def add(i, j, length, width, street):
+        key = f"{min(i, j)}_{max(i, j)}"
+        adj[i, j] = adj[j, i] = 1
+        dist[(i, j)] = dist[(j, i)] = round(max(length, 5.0), 1)
+        widths[key] = round(width, 1)
+        streets[key] = street
 
-    rows = "\n".join(f"    [{', '.join(map(str, adj[i]))}],  # {i} {names[i]}" for i in range(n_nodes))
-    link_lines = "\n".join(f'  "{k}": {{length: {l}, width: {w}}}  # {s}' for k, l, w, s in links)
+    add(0, 1, 100, 30, "station hall")  # 6. inside the station: not on the walking network
+    for u, v, d in U.edges(data=True):
+        names = sorted(d["names"])
+        street, width = (names[0] if names else "footpath"), min(d["width"], MAX_WIDTH)
+        if "Damrak" in d["names"]:
+            street, width = "Damrak", DAMRAK_WIDTH
+        if place_node[DESTINATION] in (u, v):
+            street, width = "Museumplein", max(width, SQUARE_WIDTH)
+        add(idx[u], idx[v], d["length"], width, street)
+
+    np.save(OUT / "adj_matrix.npy", adj)
+    with open(OUT / "edge_distances.pkl", "wb") as f:
+        pickle.dump(dist, f)
+
+    latlon = {0: PLACES[0][1]}
+    latlon.update({i: to_latlon(U.nodes[n]["x"], U.nodes[n]["y"]) for n, i in idx.items()})
+    positions = {str(i): [round(c, 1) for c in mercator(*ll)] for i, ll in sorted(latlon.items())}
+    (OUT / "node_positions.json").write_text(json.dumps(positions) + "\n")
+    (OUT / "names.json").write_text(json.dumps({
+        "names": {str(i): name for i, (name, _) in enumerate(PLACES)},
+        "short": {str(DESTINATION): "Museumplein"},
+        "streets": streets,
+        "label_side": LABEL_SIDE,
+        "minor": list(range(len(PLACES), N)),
+    }, ensure_ascii=False, indent=1) + "\n")
+
+    link_lines = "\n".join(f'  "{k}": {{width: {w}}}  # {streets[k]}' for k, w in widths.items())
+    places = "\n".join(f"#    {i:2d} {name}" for i, (name, _) in enumerate(PLACES))
     yaml = f"""# =====================================================================
 #  "Amsterdam: Centraal to Museumplein": challenge network for PedNStream
-#  GENERATED by tools/build_amsterdam.py from the OpenStreetMap walking
-#  network (© OpenStreetMap contributors). Edit that script, not this file.
+#  GENERATED by tools/build_amsterdam.py straight from the OpenStreetMap
+#  walking network (© OpenStreetMap contributors). Edit that script, not this file.
 # =====================================================================
 #
-#  Main places (the other nodes are points along the streets, ~{SEGMENT} m apart):
-#    0 Centraal Station (ORIGIN)   9 Stationsplein       1 Dam (Madame Tussauds)
-#    2 Westermarkt (Anne Frank)    3 Nieuwmarkt          4 Muntplein
-#    5 Waterlooplein               6 Leidseplein         7 Rijksmuseum
-#    8 Museumplein (DESTINATION)
+#  {N} nodes and {len(widths)} corridors: every walkable street within {BAND} m of the line
+#  Stationsplein - Museumplein. The adjacency matrix is in adj_matrix.npy and the corridor
+#  lengths (measured along OSM) are in edge_distances.pkl. Main places:
+{places}
 #
-#  Damrak (Stationsplein -> Dam, past Madame Tussauds) is very wide (20 m) and is
-#  the obvious way out of the station, but everything that goes that way has to
-#  squeeze through the narrow Kalverstraat (3 m) south of the Dam.
-#  Lengths are measured along the OSM walking routes; widths are 'effective'
-#  widths (what is left after terraces, bikes and trams).
+#  Widths are 'effective' walking widths: the OSM width tag, or a default per street type,
+#  with the street and its sidewalks between the same two junctions added up. Damrak
+#  (past Madame Tussauds) is set to {DAMRAK_WIDTH} m on purpose.
+#  The paths into Museumplein (an open square) are at least {SQUARE_WIDTH} m.
 # =====================================================================
 
 network:
-  adjacency_matrix: [
-{rows}
-  ]
-  origin_nodes: [{ORIGIN}]
+  origin_nodes: [0]
   destination_nodes: [{DESTINATION}]
 
 simulation:
@@ -185,7 +236,8 @@ simulation:
   assign_flows_type: "classic"
   od_tracking: true      # each person keeps their destination (OD pair) all the way
   path_finder:
-    k_paths: 6
+    k_paths: 8             # up to 8 routes ...
+    diverse_paths: true    # ... that really differ (see diverse_paths in the workshop package)
     temp: 5
     alpha: 1
     beta: 2
@@ -193,9 +245,9 @@ simulation:
     std_dev: 0
 
 default_link:
-  length: 300
-  width: 4
-  free_flow_speed: 1.2
+  length: 50
+  width: 3
+  free_flow_speed: 1.34   # m/s, a typical free walking speed
   k_critical: 2
   k_jam: 6
   gamma: 0.01
@@ -210,25 +262,17 @@ demand:
     base_lambda: 50
 
 od_flows:
-  "{ORIGIN}_{DESTINATION}": 1
+  "0_{DESTINATION}": 1
 """
     (OUT / "sim_params.yaml").write_text(yaml)
-    positions = {str(n): [round(c, 1) for c in mercator(lat, lon)] for n, (lon, lat) in sorted(lonlat.items())}
-    (OUT / "node_positions.json").write_text(json.dumps(positions) + "\n")
-    (OUT / "names.json").write_text(json.dumps({
-        "names": {str(n): names[n] for n in sorted(names)},
-        "short": {str(DESTINATION): "Museumplein"},
-        "streets": streets,
-        "label_side": LABEL_SIDE,
-        "minor": minor,
-    }, ensure_ascii=False, indent=1) + "\n")
-    print(f"{n_nodes} nodes, {len(links)} corridors")
+    walk = nx.shortest_path_length(U, place_node[1], place_node[DESTINATION], weight="length")
+    print(f"{N} nodes, {len(widths)} corridors; shortest walk Stationsplein -> Museumplein {walk:.0f} m")
 
     if "--refresh-map" in sys.argv or not (OUT / "background.jpg").exists():
-        make_background([ll[1] for ll in lonlat.values()], [ll[0] for ll in lonlat.values()])
+        make_background([ll[0] for ll in latlon.values()], [ll[1] for ll in latlon.values()])
 
 
-def make_background(lats, lons, margin=0.0025, zoom=16, fade=0.45):
+def make_background(lats, lons, margin=0.0015, zoom=16, fade=0.45):
     import contextily as cx
     import matplotlib.pyplot as plt
 

@@ -15,6 +15,7 @@ Everything underneath is plain PedNStream (NetworkEnvGenerator + Network).
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, Optional
@@ -88,6 +89,51 @@ def arrival_plan(per_minute: Iterable[float], block_minutes: float = 10, unit_ti
     for i, rate in enumerate(per_minute):
         arr[i * per_block:(i + 1) * per_block] = float(rate) * unit_time / 60
     return arr
+
+
+def diverse_paths(graph, origin, dest, max_paths=8, stretch=1.3, penalty=1.6):
+    """Up to `max_paths` routes that really differ, none more than `stretch` x the shortest.
+
+    In a dense street grid the k shortest paths are near-copies (they differ in one alley), so
+    people could never spread over parallel streets. Here: take the shortest route, make its
+    streets look `penalty` x longer, take the next shortest route, and so on.
+    Used instead of PedNStream's k-shortest-paths for networks whose sim_params.yaml sets
+    `path_finder: {diverse_paths: true}` (the Amsterdam OSM network).
+    """
+    import networkx as nx
+
+    length = {(u, v): d["weight"] for u, v, d in graph.edges(data=True)}
+    weight = dict(length)
+    shortest = nx.shortest_path_length(graph, origin, dest, weight="weight")
+    paths = []
+    for _ in range(4 * max_paths):
+        p = nx.shortest_path(graph, origin, dest, weight=lambda u, v, d: weight[(u, v)])
+        if sum(length[e] for e in zip(p, p[1:])) > stretch * shortest:
+            break
+        if p not in paths:
+            paths.append(p)
+            if len(paths) == max_paths:
+                break
+        for u, v in zip(p, p[1:]):
+            weight[(u, v)] *= penalty
+            if (v, u) in weight:
+                weight[(v, u)] *= penalty
+    return paths
+
+
+@contextmanager
+def _route_set(params):
+    """Use `diverse_paths` instead of PedNStream's k shortest paths while a network is built,
+    if its sim_params.yaml asks for it (path_finder: {diverse_paths: true})."""
+    import pednstream.ltm.path_finder as pf
+
+    k_shortest = pf.enumerate_shortest_simple_paths
+    if params.get("path_finder", {}).get("diverse_paths"):
+        pf.enumerate_shortest_simple_paths = diverse_paths   # PedNStream looks it up when it builds routes
+    try:
+        yield
+    finally:
+        pf.enumerate_shortest_simple_paths = k_shortest
 
 
 def widen(street: str, extra: float = 2, network_dir: Path | str = AMSTERDAM) -> Dict[str, Dict]:
@@ -174,15 +220,16 @@ def run(
         # built-in demand patterns reseed numpy themselves; ours don't, so seed here
         # to make every run with the same plan give exactly the same result
         np.random.seed(params.get("seed", 42))
-    net = gen.create_network(
-        str(network_dir),
-        od_flows=od_flows,
-        demand_params_overrides=demand_overrides,
-        link_params_overrides=links or {},
-        od_nodes_overrides=od_nodes,
-        custom_demand_functions=custom,
-        verbose=False,
-    )
+    with _route_set(params):
+        net = gen.create_network(
+            str(network_dir),
+            od_flows=od_flows,
+            demand_params_overrides=demand_overrides,
+            link_params_overrides=links or {},
+            od_nodes_overrides=od_nodes,
+            custom_demand_functions=custom,
+            verbose=False,
+        )
     for t in range(1, steps):
         net.network_loading(t)
 
@@ -363,15 +410,23 @@ class Result:
             step = int(total.argmax())
         if ax is None:
             _, ax = plt.subplots(figsize=(6, 6))
-        segs, cols, widths = [], [], []
+        street_map = len(self.corridors) > 100   # a whole street network: thin lines, empty streets grey
+        segs, cols, widths, empty = [], [], [], []
         for c in self.corridors:
             u, v = _parse_key(c)
-            segs.append([self.pos[u], self.pos[v]])
-            cols.append(self.density(c)[step])
+            d = self.density(c)[step]
             w = self.network.links[(u, v)].width
-            widths.append(w * 3 if Path(self.network_dir) == DEFAULT_NETWORK else 4 * np.sqrt(w))
+            if street_map and d < 0.02:
+                empty.append([self.pos[u], self.pos[v]])
+                continue
+            segs.append([self.pos[u], self.pos[v]])
+            cols.append(d)
+            widths.append(w * 3 if Path(self.network_dir) == DEFAULT_NETWORK
+                          else 1.5 * np.sqrt(w) if street_map else 4 * np.sqrt(w))
         norm = Normalize(0, vmax)
         bg = self.background
+        if empty:
+            ax.add_collection(LineCollection(empty, colors="#9e9e9e", linewidths=0.6, alpha=0.7, zorder=1))
         lc = LineCollection(segs, cmap="RdYlGn_r", norm=norm, linewidths=widths, capstyle="round",
                             alpha=0.85 if bg else 1, zorder=2)
         lc.set_array(np.array(cols))
@@ -379,8 +434,9 @@ class Result:
         label_box = dict(boxstyle="round,pad=0.15", fc="white", alpha=0.75, lw=0) if bg else None
         for n, (x, y) in self.pos.items():
             if n in self.names["minor"]:
-                ax.scatter([x], [y], s=70, c="#757575", zorder=3, edgecolor="white", linewidths=0.5)
-                ax.text(x, y, str(n), color="white", fontsize=5, ha="center", va="center", zorder=4)
+                if not street_map:   # points along a street: small grey dot with its number
+                    ax.scatter([x], [y], s=70, c="#757575", zorder=3, edgecolor="white", linewidths=0.5)
+                    ax.text(x, y, str(n), color="white", fontsize=5, ha="center", va="center", zorder=4)
                 continue
             colour = "#2e7d32" if n in self.network.origin_nodes else "#c62828" if n in self.network.destination_nodes else "#424242"
             marker = "s" if n in self.network.origin_nodes else "D" if n in self.network.destination_nodes else "o"
@@ -395,7 +451,7 @@ class Result:
         many = len(self.corridors) > 20   # big network: only label the crowded links
         for c, (u, v) in zip(self.corridors, (_parse_key(c) for c in self.corridors)):
             (x1, y1), (x2, y2) = self.pos[u], self.pos[v]
-            if many and self.density(c)[step] < 1:
+            if street_map or (many and self.density(c)[step] < 1):
                 continue
             ax.text((x1 + x2) / 2, (y1 + y2) / 2, f"{self.density(c)[step]:.1f}", fontsize=8, zorder=4,
                     ha="center", va="center", bbox=dict(boxstyle="round", fc="white", alpha=0.8, lw=0))
@@ -425,10 +481,11 @@ class Result:
             by_street = {}
             for c in self.corridors:
                 by_street.setdefault(self.names["streets"].get(c, c), []).append(self.density(c))
-            for street, dens in by_street.items():
-                worst = np.max(dens, axis=0)
-                if worst.max() > 0.1 * self.k_critical:
-                    ax.plot(minutes, worst, label=street)
+            worst = {street: np.max(dens, axis=0) for street, dens in by_street.items()}
+            busiest = sorted(worst, key=lambda s: -worst[s].max())[:8]   # the 8 most crowded streets
+            for street in busiest:
+                if worst[street].max() > 0.1 * self.k_critical:
+                    ax.plot(minutes, worst[street], label=street)
             corridors = []
         elif corridors is None:
             corridors = self.corridors
@@ -438,7 +495,7 @@ class Result:
         ax.set_xlabel("minute")
         ax.set_ylabel("density (ped/m²)")
         ax.legend(ncol=4, fontsize=8)
-        ax.set_title(title or ("Density per street (most crowded stretch)" if not corridors else "Density per corridor"))
+        ax.set_title(title or ("Density on the most crowded streets" if not corridors else "Density per corridor"))
         return ax
 
     def people_on(self, key: str) -> np.ndarray:
