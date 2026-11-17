@@ -77,6 +77,7 @@ def run(
     demand: Optional[Dict[int, Dict]] = None,
     route_choice: Optional[Dict] = None,
     links: Optional[Dict[str, Dict]] = None,
+    origins: Optional[Iterable[int]] = None,
     network_dir: Path | str = DEFAULT_NETWORK,
 ) -> "Result":
     """Run one scenario and return a `Result`.
@@ -89,6 +90,8 @@ def run(
         demand: per-origin demand overrides, e.g. {0: {"peak_lambda": 60}}.
         route_choice: path-finder overrides, e.g. {"beta": 0} (ignore congestion).
         links: link overrides, e.g. {"2_3": {"width": 4}}.
+        origins: keep only these gates as origins, e.g. [0] for Gate A alone.
+            The other gates and their OD pairs are removed from the model.
     """
     gen = NetworkEnvGenerator()
     gen.network_data = gen.load_network_data(str(network_dir))
@@ -105,11 +108,18 @@ def run(
             raise ValueError(f"OD {key}: time-varying weights need {steps + 1} values, got {len(w)}")
         od_flows[(o, d)] = w
 
+    od_nodes = {}
+    if origins is not None:
+        origins = [int(o) for o in origins]
+        od_flows = {od: w for od, w in od_flows.items() if _parse_key(od)[0] in origins}
+        od_nodes = {"origin_nodes": origins}
+
     net = gen.create_network(
         str(network_dir),
         od_flows=od_flows,
         demand_params_overrides={f"origin_{o}": p for o, p in (demand or {}).items()},
         link_params_overrides=links or {},
+        od_nodes_overrides=od_nodes,
         verbose=False,
     )
     for t in range(1, steps):
@@ -370,13 +380,13 @@ def playground():
     status = w.HTML()
 
     def share(a, b):
-        return f"{100 * a / (a + b):.0f}% / {100 * b / (a + b):.0f}%" if a + b else "no flow"
+        return f"{100 * a / (a + b):.0f}% / {100 * b / (a + b):.0f}%" if a + b else "50% / 50%"
 
     def update(*_):
         v = {k: x.value for k, x in s.items()}
         status.value = (
-            f"<b>Gate A</b> X/Y split: {share(v['0_5'], v['0_6'])} &nbsp;|&nbsp; "
-            f"<b>Gate B</b> X/Y split: {share(v['1_5'], v['1_6'])}"
+            f"Weights ask for <b>Gate A</b> X/Y: {share(v['0_5'], v['0_6'])} &nbsp;|&nbsp; "
+            f"<b>Gate B</b> X/Y: {share(v['1_5'], v['1_6'])}"
         )
         res = run(
             od={k: v[k] for k in ("0_5", "0_6", "1_5", "1_6")},

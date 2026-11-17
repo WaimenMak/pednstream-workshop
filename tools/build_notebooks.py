@@ -125,21 +125,42 @@ Work in pairs: one person clicks, the other writes down predictions. Swap every 
 * Corridor **2_3** (Plaza–Hall) is only **2 m** wide.
 * A rush of people arrives at both gates, peaking around minute 17. The rush is **the same in every run**.
 """),
-    form('''#@title What is an OD weight? Try it {display-mode: "form"}
-#@markdown OD weights are **relative**. Set two weights for Gate A and see what share of Gate A's people goes where.
+    md("""
+## What is an OD weight?
+An **OD weight** says how strongly the people entering at a gate (the *origin*) are drawn to each
+*destination*. Weights are **relative**: `3` and `1` mean "three times as attracted to the Platform as
+to the City Exit". How *many* people enter is set by the gate's demand; the weights only steer them.
+
+The cell below opens **only Gate A**, runs the simulation and counts where Gate A's people actually
+come out. Compare that with the split the weights ask for.
+"""),
+    form('''#@title ▶ What is an OD weight? Try it {display-mode: "form"}
 weight_A_to_Platform = 3  #@param {type:"slider", min:0, max:10, step:1}
 weight_A_to_CityExit = 1  #@param {type:"slider", min:0, max:10, step:1}
-total = weight_A_to_Platform + weight_A_to_CityExit
-if total == 0:
-    print("Both weights are 0. PedNStream then has no preference and falls back to 50% / 50%.")
-else:
-    pX = weight_A_to_Platform / total
-    print(f"Of everyone entering at Gate A:  {pX:.0%} → Platform X,   {1 - pX:.0%} → City Exit Y")
-    print("How MANY people enter is set by the gate's demand; the weights only split them.")
-    plt.figure(figsize=(6, 1.2)); plt.barh([0], [pX], color="#1565c0"); plt.barh([0], [1 - pX], left=[pX], color="#ef6c00")
-    plt.xlim(0, 1); plt.yticks([]); plt.title("Gate A: Platform X (blue) / City Exit Y (orange)"); plt.show()'''),
+wX, wY = weight_A_to_Platform, weight_A_to_CityExit
+asked = wX / (wX + wY) if wX + wY else 0.5        # both 0: no preference, PedNStream uses 50 / 50
+
+only_A = run(od={"0_5": wX, "0_6": wY}, origins=[0])   # Gate A is the only gate open
+x, y = only_A.arrivals(5)[-1], only_A.arrivals(6)[-1]
+got = x / (x + y)
+
+print(f"The weights ask for:      {asked:.0%} → Platform X,  {1 - asked:.0%} → City Exit Y")
+print(f"The simulation delivered: {got:.0%} → Platform X,  {1 - got:.0%} → City Exit Y"
+      f"   ({x:.0f} and {y:.0f} people)")
+plt.figure(figsize=(7, 1.8))
+for row, share in [(1, asked), (0, got)]:
+    plt.barh([row], [share], color="#1565c0"); plt.barh([row], [1 - share], left=[share], color="#ef6c00")
+    plt.text(share / 2, row, f"{share:.0%}", ha="center", va="center", color="white")
+plt.yticks([1, 0], ["weights ask", "simulation"]); plt.xlim(0, 1)
+plt.title("Gate A: Platform X (blue) / City Exit Y (orange)"); plt.show()'''),
     md("""
-> **Quick check:** weights 10 & 10 versus 1 & 1. Same result or different? Try it above.
+> **Quick check 1:** weights 10 & 10 versus 1 & 1. Same result or different?
+>
+> **Quick check 2:** try 1 & 0, then 3 & 1. The simulation is close to what the weights ask, but not
+> always exact. That's because PedNStream does **not** give each person a fixed destination.
+> At **every junction** it splits the crowd again, using the OD weights of the trips that pass through
+> that corridor. It also moves whole people per 10-second step. Keep this in mind: in this model the
+> weights *steer* people, and the simulation decides where they really end up.
 
 ---
 ## 0b · Under the hood: a PedNStream simulation in four steps
@@ -162,7 +183,7 @@ You can override parts of the YAML from code. Here we set the **OD weights** wit
     code('''gen = NetworkEnvGenerator()
 net = gen.create_network(
     str(DEFAULT_NETWORK),
-    od_flows={(0, 5): 1, (0, 6): 1,     # Gate A: 50% to Platform X, 50% to City Exit Y
+    od_flows={(0, 5): 1, (0, 6): 1,     # Gate A: drawn equally to Platform X and City Exit Y
               (1, 5): 1, (1, 6): 1},    # Gate B: the same
     verbose=False,
 )
@@ -205,7 +226,7 @@ From here on we use the ▶ buttons so you can focus on the flows, not the code.
 """),
     form('''#@title ▶ Run the baseline (all weights equal) {display-mode: "form"}
 base = run()
-base.dashboard("Baseline: every gate sends 50% to X and 50% to Y"); plt.show()
+base.dashboard("Baseline: both gates drawn equally to X and Y"); plt.show()
 display(base.kpis().to_frame("baseline"))'''),
     md("""
 **How to read this**
@@ -233,7 +254,8 @@ display(all_x.route_split())'''),
 
 ---
 ## Exercise 2 · Same totals, different mix ⭐
-Both scenarios send **exactly half** of all travellers to X and half to Y. Only *who* goes where differs:
+In both scenarios one gate is drawn to X and the other to Y, so **on paper** half of all travellers go
+to each destination. Only *who* goes where differs:
 
 | scenario | Gate A goes to | Gate B goes to |
 |---|---|---|
@@ -252,6 +274,9 @@ display(crossing.link_table())'''),
 **Discuss**
 1. Destination totals are identical, yet one scenario costs much more. Explain why in one sentence, using *route overlap* or *counter-flow*.
 2. Knowing only "50% go to the Platform", could you have predicted the congestion?
+3. Look at *reached Platform X* in the table. The two scenarios don't deliver exactly the same totals.
+   Where do the two gates' walkers share a corridor in the crossing scenario? *(Hint: corridor 2_4, then the Mall Junction.)*
+   What happens there if the model doesn't know where each person is heading?
 
 ---
 ## Exercise 3 · Destinations that change over time
@@ -333,8 +358,8 @@ width_of_corridor_2_3_m = 2  #@param {type:"slider", min:1, max:6, step:0.5}
 save_as = ""  #@param {type:"string"}
 
 def _share(a, b):
-    return f"{a / (a + b):.0%} to X / {b / (a + b):.0%} to Y" if a + b else "both 0, so PedNStream falls back to 50% / 50%"
-print("Gate A:", _share(A_to_Platform_X, A_to_City_Exit_Y), "   |   Gate B:", _share(B_to_Platform_X, B_to_City_Exit_Y))
+    return f"{a / (a + b):.0%} to X / {b / (a + b):.0%} to Y" if a + b else "both 0, so 50% / 50%"
+print("Weights ask for   Gate A:", _share(A_to_Platform_X, A_to_City_Exit_Y), "   |   Gate B:", _share(B_to_Platform_X, B_to_City_Exit_Y))
 
 res = run(
     od={"0_5": A_to_Platform_X, "0_6": A_to_City_Exit_Y, "1_5": B_to_Platform_X, "1_6": B_to_City_Exit_Y},
@@ -342,6 +367,8 @@ res = run(
     route_choice={"beta": beta_crowd_avoidance},
     links={"2_3": {"width": width_of_corridor_2_3_m}},
 )
+_k = res.kpis(); _x, _y = _k["reached Platform X"], _k["reached City Exit Y"]
+print(f"Simulation delivered: {_x / (_x + _y):.0%} of all arrivals at X / {_y / (_x + _y):.0%} at Y")
 res.dashboard(); plt.show()
 if "saved" not in globals():
     saved = {}
@@ -351,7 +378,7 @@ display(compare({**saved, "this run": res}))'''),
     md("""
 **Things to try**
 * Find the **smallest change** to one OD weight that makes corridor 2_3 congested.
-* Keep the overall split at 50/50, and find the **best** and **worst** way to divide it over the two gates.
+* Keep the weights at 50/50 overall, and find the **best** and **worst** way to divide them over the two gates. Is the delivered split still 50/50?
 * Turn the Gate B peak up. When are people turned away? Does it depend on where they want to go?
 * Set β to 0 and then 10. Which OD patterns are sensitive to route choice?
 * Widen corridor 2_3. Does the worst corridor simply *move* somewhere else?
@@ -379,11 +406,12 @@ write("03_challenge.ipynb", [
 {MAP}
 With signs, staff and app messages you can steer **which destination people from each gate head for**
 (think *"Platform entrance via the South Gate"*). In model terms: **you choose the OD weights.**
+The weights only *steer* people, so check what the simulation actually delivers.
 
 ### Rules
 * Gate demand is fixed.
-* The train company requires that **at least 60%** of all travellers are sent to the **Platform X**.
-  Both gates are equally busy, so the **average** of your two shares must be **≥ 0.60**.
+* The train company requires that **at least 60%** of everyone who reaches a destination arrives at the
+  **Platform X**. This is measured in the **simulation**, not read off your weights.
 * **Score = time spent inside (person-hours) + 0.25 h for every person turned away. Lower is better.**
 * Post your best valid score on the leaderboard.
 {HOW_TO}
@@ -391,12 +419,13 @@ With signs, staff and app messages you can steer **which destination people from
     *setup("from pednstream_workshop import run, compare, compare_maps"),
     form('''#@title 🏆 **Your strategy**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
-share_of_Gate_A_sent_to_Platform = 0.6  #@param {type:"slider", min:0, max:1, step:0.05}
-share_of_Gate_B_sent_to_Platform = 0.6  #@param {type:"slider", min:0, max:1, step:0.05}
+#@markdown Weight towards the Platform per gate (the rest of the weight goes to the City Exit)
+weight_Gate_A_to_Platform = 0.6  #@param {type:"slider", min:0, max:1, step:0.05}
+weight_Gate_B_to_Platform = 0.6  #@param {type:"slider", min:0, max:1, step:0.05}
 #@markdown **Bonus round only**: widen one corridor by 2 m (leave at "none" for the main round)
 upgrade = "none"  #@param ["none", "0_2", "1_3", "2_3", "2_4", "3_4", "3_5", "4_6"]
 
-a, b = share_of_Gate_A_sent_to_Platform, share_of_Gate_B_sent_to_Platform
+a, b = weight_Gate_A_to_Platform, weight_Gate_B_to_Platform
 links = {}
 if upgrade != "none":
     base_width = run().link(upgrade).width
@@ -404,15 +433,16 @@ if upgrade != "none":
 res = run(od={"0_5": a, "0_6": 1 - a, "1_5": b, "1_6": 1 - b}, links=links)
 k = res.kpis()
 score = k["time spent inside (person-hours)"] + 0.25 * k["turned away at gates"]
-valid = (a + b) / 2 >= 0.6 - 1e-9
+to_X = k["reached Platform X"] / (k["reached Platform X"] + k["reached City Exit Y"])
+valid = to_X >= 0.6
 
 if "attempts" not in globals():
     attempts = []
 attempts.append({"team": team_name, "A→X": a, "B→X": b, "upgrade": upgrade,
-                 "overall to X": f"{(a + b) / 2:.0%}", "valid": "✅" if valid else "❌", "score": round(float(score), 1)})
+                 "delivered to X": f"{to_X:.1%}", "valid": "✅" if valid else "❌", "score": round(float(score), 1)})
 
 print(("✅ Valid strategy" if valid else "❌ BREAKS the 60% rule: this score does not count") +
-      f"  (overall {(a + b) / 2:.0%} sent to the Platform)")
+      f"  ({to_X:.1%} of arrivals reached the Platform; weights asked for {(a + b) / 2:.0%})")
 print(f"\\n   SCORE = {score:.1f}     (time inside {k['time spent inside (person-hours)']:.1f} h, turned away {k['turned away at gates']})\\n")
 if valid:
     print(f"📋 Leaderboard line:  {team_name} | A→X {a:.2f} | B→X {b:.2f} | upgrade {upgrade} | score {score:.1f}")
@@ -425,6 +455,7 @@ display(pd.DataFrame(attempts).sort_values(["valid", "score"], ascending=[False,
 <details><summary>Hint 1</summary>Look at the map of your strategy: which corridors are red, and which OD groups walk through them?</details>
 <details><summary>Hint 2</summary>Gate B has only <b>one</b> route to the Platform, and it shares nothing with Gate A's routes.</details>
 <details><summary>Hint 3</summary>Remember Exercise 2: the crossing pattern was expensive, the parallel one was cheap.</details>
+<details><summary>Hint 4</summary>Just missed 60%? The weights steer, the simulation decides. Nudge one weight up a little.</details>
 
 ---
 ### For coders (optional): search systematically
@@ -435,14 +466,16 @@ shares = np.round(np.arange(0, 1.01, 0.1), 1)
 scores = np.full((len(shares), len(shares)), np.nan)
 for i, a in enumerate(shares):
     for j, b in enumerate(shares):
-        if (a + b) / 2 < 0.6 - 1e-9:
-            continue                       # breaks the 60% rule
+        if (a + b) / 2 < 0.5:
+            continue                       # far too few to X, skip to save time
         k = run(od={"0_5": a, "0_6": 1 - a, "1_5": b, "1_6": 1 - b}).kpis()
+        if k["reached Platform X"] / (k["reached Platform X"] + k["reached City Exit Y"]) < 0.6:
+            continue                       # breaks the 60% rule
         scores[i, j] = k["time spent inside (person-hours)"] + 0.25 * k["turned away at gates"]
 
 plt.imshow(scores, origin="lower", cmap="viridis_r")
 plt.xticks(range(len(shares)), shares); plt.yticks(range(len(shares)), shares)
-plt.xlabel("share of Gate B to Platform"); plt.ylabel("share of Gate A to Platform")
+plt.xlabel("Gate B weight to Platform"); plt.ylabel("Gate A weight to Platform")
 plt.colorbar(label="score (lower is better)"); plt.title("Challenge score"); plt.show()
 i, j = np.unravel_index(np.nanargmin(scores), scores.shape)
 print(f"Best on this grid: A→X {shares[i]}, B→X {shares[j]}, score {scores[i, j]:.1f}")'''),
@@ -600,13 +633,13 @@ def simulate(**overrides):
 
 rush = simulate(custom_demand_functions=[evening_rush],
                 demand_params_overrides={"origin_0": {"pattern": "evening_rush"}},
-                od_flows={(0, 2): 1, (0, 3): 3})          # 75% want the narrow north exit
+                od_flows={(0, 2): 1, (0, 3): 3})          # drawn 3:1 to the narrow north exit
 
 plt.figure(figsize=(9, 3))
 plt.plot(minutes, rush.nodes[0].demand[:T], label="arrivals at entrance", c="grey")
 for (u, v) in [(0, 1), (1, 2), (1, 3)]:
     plt.plot(minutes, rush.links[(u, v)].num_pedestrians[:T], label=f"people on {u}→{v}")
-plt.xlabel("minute"); plt.ylabel("people"); plt.legend(); plt.title("Evening rush, 75% to the north exit"); plt.show()'''),
+plt.xlabel("minute"); plt.ylabel("people"); plt.legend(); plt.title("Evening rush, weights 3:1 for the north exit"); plt.show()'''),
     md("""
 ## 6 · A parameter sweep
 Research questions are usually *"how does output Y change with input X?"*. Loop over X, collect Y

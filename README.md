@@ -73,7 +73,7 @@ jupyter lab notebooks/
 ```python
 from pednstream_workshop import run, compare, compare_maps, switch
 
-res = run(od={"0_5": 3, "0_6": 1, "1_5": 1, "1_6": 1})   # A sends 75% to X, B sends 50%
+res = run(od={"0_5": 3, "0_6": 1, "1_5": 1, "1_6": 1})   # A drawn 3:1 to X, B 1:1
 res.dashboard()          # map + density over time + arrivals
 res.kpis()               # headline numbers
 res.link_table()         # per corridor
@@ -83,6 +83,7 @@ run(od={"0_5": switch(1, 6, at_step=150)})               # weight changes at min
 run(demand={0: {"peak_lambda": 60}})                     # busier Gate A
 run(route_choice={"beta": 0})                            # people ignore crowding
 run(links={"2_3": {"width": 4}})                         # widen the narrow corridor
+run(od={"0_5": 3, "0_6": 1}, origins=[0])                # only Gate A open
 compare({"name 1": res1, "name 2": res2})                # KPI table side by side
 ```
 
@@ -101,7 +102,9 @@ net.links[(2, 3)].density          # numpy array over time, one per directed cor
 
 **OD keys** are `"origin_destination"`: origins `0` (West Gate A) and `1` (South Gate B),
 destinations `5` (Platform X) and `6` (City Exit Y). The weights are **relative per origin**:
-`{"0_5": 3, "0_6": 1}` means 75% of Gate A's people want the Platform.
+`{"0_5": 3, "0_6": 1}` means Gate A's people are drawn three times as strongly to the Platform.
+PedNStream re-applies the weights at every junction rather than giving each person a fixed
+destination, so the split that actually arrives can differ from 75 / 25. The simulation decides.
 
 ## Repository layout
 ```

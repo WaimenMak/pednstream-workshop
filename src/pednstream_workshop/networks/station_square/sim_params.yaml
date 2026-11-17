@@ -81,10 +81,12 @@ demand:
     peak_lambda: 40
     peak_position: 0.35
 
-# OD WEIGHTS — relative, not absolute! For each origin they are normalised
-# into "what share of the people entering here wants to go to each destination".
-#   0_5: 1, 0_6: 1  -> West Gate sends 50% to the Platform, 50% to City Exit
-#   0_5: 3, 0_6: 1  -> 75% / 25%
+# OD WEIGHTS — relative, not absolute! They say how strongly the people entering
+# at a gate are drawn to each destination:
+#   0_5: 1, 0_6: 1  -> West Gate drawn equally to the Platform and the City Exit
+#   0_5: 3, 0_6: 1  -> three times as strongly to the Platform
+# PedNStream does not give each person a fixed destination: it re-applies these
+# weights at every junction, so the split that comes out can differ a little.
 od_flows:
   "0_5": 1
   "0_6": 1
