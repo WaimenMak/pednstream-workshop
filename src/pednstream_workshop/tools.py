@@ -142,6 +142,44 @@ def _route_set(params):
         pf.enumerate_shortest_simple_paths = k_shortest
 
 
+def route_plan(*blocks: str) -> list:
+    """Open/closed per route and per 10-minute block, from strings of 1 (open) and 0 (closed).
+
+    route_plan("111111", "110011", ...) -> route 1 open all hour, route 2 closed in minutes 20-40, ...
+    After the last block the last setting stays.
+    """
+    return [[c == "1" for c in b.replace(" ", "")] for b in blocks]
+
+
+def _route_gates(net, open_routes, block_steps: int, steps: int) -> list:
+    """Gate widths over time for the first street of every route, as [(link, width per step)].
+
+    The first street of a route is its first link that no other route uses (for Amsterdam: the
+    5 streets leaving Stationsplein). While a route is closed, that street's entry gate
+    (PedNStream's `back_gate_width`) is 0, so nobody can walk into it; people already on the
+    route keep walking. After the last block the last setting stays.
+    """
+    pf = net.path_finder
+    flags = [[bool(x) for x in (r if np.ndim(r) else [r])] for r in open_routes]
+    gates = []
+    for od, paths in pf.od_paths.items():
+        if len(paths) != len(flags):
+            raise ValueError(f"open_routes needs {len(paths)} routes (see routes()), got {len(flags)}")
+        links = [list(zip(p, p[1:])) for p in paths]
+        for b in range(max(map(len, flags))):
+            if not any(f[min(b, len(f) - 1)] for f in flags):
+                raise ValueError(f"All routes are closed in block {b + 1}: open at least one.")
+        for r, route_links in enumerate(links):
+            others = set().union(*(set(l) for k, l in enumerate(links) if k != r))
+            first = next((l for l in route_links if l not in others), None)
+            if first is None:
+                raise ValueError(f"Route {r + 1} has no street of its own, so it can't be closed on its own.")
+            link = net.links[first]
+            block = np.minimum(np.arange(steps + 1) // block_steps, len(flags[r]) - 1)
+            gates.append((link, np.where(np.array(flags[r])[block], link.back_gate_width, 0.0)))
+    return gates
+
+
 def widen(street: str, extra: float = 2, network_dir: Path | str = AMSTERDAM) -> Dict[str, Dict]:
     """Link overrides that widen every stretch of a named street, for run(links=...).
 
@@ -170,6 +208,7 @@ def run(
     origins: Optional[Iterable[int]] = None,
     arrivals: Optional[Dict[int, Iterable[float]]] = None,
     network_dir: Path | str = DEFAULT_NETWORK,
+    open_routes: Optional[Iterable[bool]] = None,
 ) -> "Result":
     """Run one scenario and return a `Result`.
 
@@ -186,6 +225,9 @@ def run(
         arrivals: your own arrival pattern per origin: people per time step,
             e.g. {0: arrival_plan([300, 300, 0, 300])}. Replaces `demand` for that origin.
         network_dir: which network to load, e.g. AMSTERDAM. Default: Station Square.
+        open_routes: per route (numbers as in `routes()`): True/False for the whole run, or a list
+            per 10-minute block, e.g. route_plan("111111", "000111", ...) closes route 2 for the
+            first 30 minutes. A closed route's first street gets gate width 0; default: all open.
     """
     gen = NetworkEnvGenerator()
     gen.network_data = gen.load_network_data(str(network_dir))
@@ -236,7 +278,10 @@ def run(
             custom_demand_functions=custom,
             verbose=False,
         )
+    gates = [] if open_routes is None else _route_gates(net, open_routes, int(round(600 / params["unit_time"])), steps)
     for t in range(1, steps):
+        for link, width in gates:      # open or close the first street of each route
+            link.back_gate_width = width[t]
         net.network_loading(t)
 
     return Result(network=net, steps=steps, unit_time=params["unit_time"], od=od_flows,
@@ -246,6 +291,74 @@ def run(
 # ----------------------------------------------------------------------------
 # Results
 # ----------------------------------------------------------------------------
+def routes(network_dir: Path | str = AMSTERDAM) -> pd.DataFrame:
+    """The routes people can take from the origin to the destination, numbered as in `open_routes`.
+
+    Builds the network (no simulation) and names each route by its main streets.
+    """
+    gen = NetworkEnvGenerator()
+    gen.network_data = gen.load_network_data(str(network_dir))
+    params = gen.config["params"]
+    with _route_set(params):
+        net = gen.create_network(str(network_dir), verbose=False)
+    names = _load_names(network_dir)
+    streets = names["streets"]
+    places = {name.split(" (")[0] for name in names["names"].values()}   # squares are not "via" streets
+    rows = []
+    for (o, d), paths in net.path_finder.od_paths.items():
+        for i, path in enumerate(paths, start=1):
+            along = {}
+            for u, v in zip(path, path[1:]):
+                street = streets.get(f"{min(u, v)}_{max(u, v)}", "")
+                if street and street not in ("station hall", "footpath") and street not in places:
+                    along[street] = along.get(street, 0) + net.links[(u, v)].length
+            main = sorted(sorted(along, key=lambda s: -along[s])[:3], key=list(along).index)
+            rows.append({"route": i, "OD": f"{o}_{d}", "via": " → ".join(main),
+                         "length (m)": round(sum(net.links[(u, v)].length for u, v in zip(path, path[1:]))),
+                         "nodes": path})
+    return pd.DataFrame(rows).set_index("route")
+
+
+def show_routes(network_dir: Path | str = AMSTERDAM, ax=None):
+    """Map with every route in its own colour and number (the numbers used by `open_routes`)."""
+    table = routes(network_dir)
+    names = _load_names(network_dir)
+    with open(Path(network_dir) / "node_positions.json") as f:
+        pos = {int(k): v for k, v in json.load(f).items()}
+    if ax is None:
+        _, ax = plt.subplots(figsize=(11, 8))
+    segs = [[pos[int(a)], pos[int(b)]] for a, b in (k.split("_") for k in names["streets"])]
+    ax.add_collection(LineCollection(segs, colors="#9e9e9e", linewidths=0.6, alpha=0.7, zorder=1))
+    colours = plt.get_cmap("tab10").colors
+    for i, (number, row) in enumerate(table.iterrows()):
+        off = (i - (len(table) - 1) / 2) * 14   # metres: so routes sharing a street stay visible
+        xy = np.array([pos[n] for n in row["nodes"]]) + off
+        ax.plot(xy[:, 0], xy[:, 1], color=colours[i % 10], lw=3, alpha=0.9, zorder=2,
+                label=f"route {number}: {row['via']} ({row['length (m)'] / 1000:.1f} km)")
+    for n, (x, y) in pos.items():
+        if n in names["minor"]:
+            continue
+        ax.scatter([x], [y], s=120, c="#424242", zorder=3, edgecolor="white")
+        ax.annotate(f'{n} {names["names"].get(n, "").split(" (")[0]}', (x, y), xytext=(7, 5),
+                    textcoords="offset points", fontsize=8, zorder=4,
+                    bbox=dict(boxstyle="round,pad=0.15", fc="white", alpha=0.75, lw=0))
+    xs, ys = [p[0] for p in pos.values()], [p[1] for p in pos.values()]
+    pad = 0.06 * max(max(xs) - min(xs), max(ys) - min(ys))
+    bg = Path(network_dir) / "background.jpg"
+    if bg.exists():
+        with open(Path(network_dir) / "background.json") as f:
+            meta = json.load(f)
+        ax.imshow(plt.imread(bg), extent=meta["extent"], zorder=0, interpolation="bilinear")
+        ax.text(0.01, 0.01, meta.get("attribution", ""), transform=ax.transAxes, fontsize=6, color="#555555")
+    ax.set_xlim(min(xs) - pad, max(xs) + pad)
+    ax.set_ylim(min(ys) - pad, max(ys) + pad)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.set_xticks([]); ax.set_yticks([])
+    ax.legend(loc="upper left", fontsize=8, framealpha=0.9)
+    ax.set_title("The routes people can take (numbers as in your route plan)")
+    return ax
+
+
 @dataclass
 class Result:
     network: object

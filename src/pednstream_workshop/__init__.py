@@ -16,12 +16,15 @@ from .tools import (
     compare_maps,
     playground,
     ramp,
+    route_plan,
+    routes,
     run,
+    show_routes,
     switch,
     widen,
 )
 
-__version__ = "1.6.2"
+__version__ = "1.7.0"
 
 __all__ = [
     "AMSTERDAM",
@@ -34,7 +37,10 @@ __all__ = [
     "compare_maps",
     "playground",
     "ramp",
+    "route_plan",
+    "routes",
     "run",
+    "show_routes",
     "switch",
     "widen",
 ]

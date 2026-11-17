@@ -150,7 +150,7 @@ Work in pairs: one person clicks, the other writes down predictions. Swap every 
 
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, switch", min_version="1.6.2"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, switch", min_version="1.7.0"),
     md(f"""
 ## 0 · Meet *Station Square*
 {MAP}
@@ -376,7 +376,7 @@ Change any value in the form, press ▶, and compare. Each run simulates 50 minu
 {MAP}
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, playground", min_version="1.6.2"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, playground", min_version="1.7.0"),
     form('''#@title 🎛️ **Playground**: set the values, then press ▶ {display-mode: "form"}
 #@markdown ### OD weights (relative, per gate)
 A_to_Platform_X = 1  #@param {type:"slider", min:0, max:5, step:0.5}
@@ -452,7 +452,7 @@ delivers: people still walking when the clock stops don't count.
 * Post your best valid score on the leaderboard.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, widen", min_version="1.6.2"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, route_plan, show_routes", min_version="1.7.0"),
     form('''#@title 🏆 **Your strategy**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
 #@markdown Weight towards the Platform per gate (the rest of the weight goes to the City Exit)
@@ -528,17 +528,22 @@ print(f"Best on this grid: A→X {shares[i]}, B→X {shares[j]}, score {scores[i
 {AMS_MAP}
 A big open-air event starts on **Museumplein** and the trains bring thousands of visitors into
 **Amsterdam Centraal**. Stewards on the platforms decide **how many people per minute** are let out of
-the station towards the event. That is your lever: **you design the arrival pattern** for the first hour.
+the station towards the event. That is your first lever: **you design the arrival pattern** for the first hour.
+Your second lever: stewards on **Stationsplein** can **close routes**, block by block.
 
 The obvious way out is **Damrak**, past Madame Tussauds on the Dam: a *very* wide street (20 m),
 so it looks like it can take anyone. But south of the Dam the crowd has to fit into much narrower
 streets: **Rokin**, then **Vijzelstraat** towards the Museum Quarter. Other routes exist (Kalverstraat and
 Leidsestraat, Nieuwezijds Voorburgwal and the canals), but they are longer. People choose their own
-route (shorter, wider and emptier streets are more attractive), just like in Part 1, among up to
-8 really different routes.
+route (shorter, wider and emptier streets are more attractive), just like in Part 1, among **5 routes**.
+All 5 start at Stationsplein, so stewards there can send people away from a route by closing its entrance.
 
 ### Rules
 * You set the number of people per minute leaving the station for six 10-minute blocks (minute 0 to 60).
+* For each of the 5 routes you decide, per 10-minute block, whether it is **open** or **closed**. Closing a
+  route shuts the gate at its first street (in PedNStream: gate width 0), so nobody new can walk in; people
+  already on it keep walking, and people in the station pick another open route. After minute 60 the last
+  setting stays. At least one route must be open in every block.
 * The simulation runs for **2 hours**. The shortest walk is about **3.3 km**, ≈ 41 minutes on empty streets;
   because people spread over several routes, the average trip on empty streets is about **50 minutes**.
 * **Score = people who reach Museumplein − hours that people spend on the streets (person-hours).**
@@ -548,11 +553,13 @@ route (shorter, wider and emptier streets are more attractive), just like in Par
 * Post your best score on the leaderboard.
 """),
     md("""
-## ▶ Step 2: load the Amsterdam tools (if you skipped Challenge 1, run Step 1 first)
+## ▶ Step 2: load the Amsterdam tools and look at the 5 routes (if you skipped Challenge 1, run Step 1 first)
+Routes that share a street run side by side on this map. The route numbers are the ones you open and close below.
 """),
     code('''import pandas as pd
-from pednstream_workshop import AMSTERDAM, arrival_plan, widen
-print("✅ Amsterdam loaded.")'''),
+from pednstream_workshop import AMSTERDAM, arrival_plan, route_plan, routes, show_routes
+show_routes(AMSTERDAM); plt.show()
+display(routes(AMSTERDAM).drop(columns=["OD", "nodes"]))'''),
     form('''#@title 🎟️ **Your arrival plan**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
 #@markdown People per minute let out of Centraal Station, for each 10-minute block of the first hour
@@ -562,12 +569,21 @@ minutes_20_30 = 300  #@param {type:"slider", min:0, max:900, step:30}
 minutes_30_40 = 300  #@param {type:"slider", min:0, max:900, step:30}
 minutes_40_50 = 300  #@param {type:"slider", min:0, max:900, step:30}
 minutes_50_60 = 300  #@param {type:"slider", min:0, max:900, step:30}
-#@markdown **Bonus round only**: widen one street by 2 m (leave at "none" for the main round)
-upgrade = "none"  #@param ["none", "Damrak", "Dam", "Rokin", "Oude Turfmarkt", "Vijzelstraat", "Kalverstraat", "Leidsestraat", "Nieuwendijk", "Nieuwezijds Voorburgwal"]
+#@markdown **Routes open per 10-minute block**: six digits, one per block (1 = open, 0 = closed).
+#@markdown E.g. "000111" = closed in minutes 0-30, open from minute 30.
+route_1_Damrak = "111111"  #@param {type:"string"}
+route_2_Kalverstraat = "111111"  #@param {type:"string"}
+route_3_Nieuwezijds_Voorburgwal = "111111"  #@param {type:"string"}
+route_4_Oudezijds_Achterburgwal = "111111"  #@param {type:"string"}
+route_5_Singel = "111111"  #@param {type:"string"}
 
 plan = [minutes_00_10, minutes_10_20, minutes_20_30, minutes_30_40, minutes_40_50, minutes_50_60]
-links = widen(upgrade, 2) if upgrade != "none" else {}   # +2 m along the whole street
-res = run(network_dir=AMSTERDAM, arrivals={0: arrival_plan(plan)}, links=links)
+route_codes = [route_1_Damrak, route_2_Kalverstraat, route_3_Nieuwezijds_Voorburgwal,
+               route_4_Oudezijds_Achterburgwal, route_5_Singel]
+for i, code_ in enumerate(route_codes, start=1):
+    if len(code_.replace(" ", "")) != 6 or set(code_.replace(" ", "")) - {"0", "1"}:
+        raise ValueError(f"Route {i}: use six digits of 0 and 1, e.g. '111111' (you typed {code_!r})")
+res = run(network_dir=AMSTERDAM, arrivals={0: arrival_plan(plan)}, open_routes=route_plan(*route_codes))
 last_plan = res   # remembered for the animation below
 k = res.kpis()
 sent, arrived = k["total demand (people)"], k["reached Museumplein"]
@@ -577,13 +593,13 @@ score = arrived - hours
 if "plans" not in globals():
     plans = []
 plans.append({"team": team_name, **{f"{10 * i}-{10 * i + 10}'": p for i, p in enumerate(plan)},
-              "upgrade": upgrade, "sent": sent, "arrived": arrived,
+              "routes 1-5": " ".join(route_codes), "sent": sent, "arrived": arrived,
               "person-hours": round(hours), "score": round(score)})
 
 print(f"🚆 Sent {sent:,} people   🎨 {arrived:,} reached Museumplein   ⏱ {hours:,.0f} person-hours on the streets")
 print(f"   average trip: {60 * hours / max(sent, 1):.0f} min (empty streets: about 50 min)")
 print(f"\\n   SCORE = {score:,.0f}\\n")
-print(f"📋 Leaderboard line:  {team_name} | plan {plan} | upgrade {upgrade} | score {score:.0f}")
+print(f"📋 Leaderboard line:  {team_name} | plan {plan} | routes {' '.join(route_codes)} | score {score:.0f}")
 res.dashboard(f"{team_name}: {plan} people/min", flow=True); plt.show()
 print("Your plans so far (best first):")
 display(pd.DataFrame(plans).sort_values("score", ascending=False).reset_index(drop=True))'''),
@@ -610,33 +626,37 @@ animation: which street fills up first, and where does the queue go next? Is it 
 Do they make it before the end (minute 120)? What if they have to queue?</details>
 <details><summary>Hint 4</summary>Your blocks don't have to be equal. A bigger group is fine as long as
 the queue it causes clears quickly. Is there a moment in the hour when nobody comes after them?</details>
+<details><summary>Hint 5</summary>Look at the route map: which routes end up in the same narrow street? Almost
+everyone picks the route past the wide Damrak. What happens further on if fewer people start that way?</details>
 
 ---
 ### For coders (optional): let the computer search
-A simple *hill climb*: find the best constant plan, then try moving each block up or down by 60 and keep any
+A simple search in two steps. First try a few constant arrival rates, each with all routes open and with
+one route closed for the whole hour. Then take the best and move each block up or down by 60, keeping any
 change that improves the score. Each run takes about 10 s on the full street map, so this takes **≈5 minutes**.
-Can you beat it by hand? Can you write a better search?
+Can you beat it by hand, for example by closing routes only in some blocks? Can you write a better search?
 """),
-    code('''def amsterdam_score(plan):
-    k = run(network_dir=AMSTERDAM, arrivals={0: arrival_plan(plan)}).kpis()
+    code('''def amsterdam_score(plan, open_routes=None):
+    k = run(network_dir=AMSTERDAM, arrivals={0: arrival_plan(plan)}, open_routes=open_routes).kpis()
     return k["reached Museumplein"] - float(k["time spent inside (person-hours)"])
 
-constant = {rate: amsterdam_score([rate] * 6) for rate in [240, 300, 360, 420]}
-rate = max(constant, key=constant.get)
-best, best_score = [rate] * 6, constant[rate]
-print(f"best constant plan: {rate}/min, score {best_score:,.0f}")
-for round_ in range(2):
-    improved = False
-    for i in range(6):
-        for change in (-60, 60):
-            trial = best.copy()
-            trial[i] = min(900, max(0, trial[i] + change))
-            s = amsterdam_score(trial)
-            if s > best_score + 1:
-                best, best_score, improved = trial, s, True
-    print(f"round {round_ + 1}: best plan {best}, score {best_score:,.0f}")
-    if not improved:
-        break'''),
+options = {"all open": [True] * 5}
+for r in range(5):
+    options[f"route {r + 1} closed"] = [i != r for i in range(5)]
+
+trials = {(rate, name): amsterdam_score([rate] * 6, open_) for rate in [360, 480, 600] for name, open_ in options.items()}
+(rate, name), best_score = max(trials.items(), key=lambda kv: kv[1])
+best, open_routes = [rate] * 6, options[name]
+print(f"step 1: {rate}/min with {name}, score {best_score:,.0f}")
+
+for i in range(6):
+    for change in (-60, 60):
+        trial = best.copy()
+        trial[i] = min(900, max(0, trial[i] + change))
+        s = amsterdam_score(trial, open_routes)
+        if s > best_score + 1:
+            best, best_score = trial, s
+print(f"step 2: plan {best} with {name}, score {best_score:,.0f}")'''),
     md("""
 ### Reflection
 1. Describe your arrival plan in words a steward on the platform would understand.
@@ -645,7 +665,8 @@ for round_ in range(2):
 4. Most people walk Damrak, Rokin and Vijzelstraat even when Vijzelstraat is packed and Kalverstraat is quiet.
    In PedNStream people choose at each junction from the distance and how wide and empty the *next* street is;
    they can't see a jam 2 km ahead. Would real visitors (with phones, or stewards) behave the same way?
-5. In the bonus round, which street was worth widening, and was it worth more than a smart plan?
+5. Which routes did you close, and when? Closing a route takes a choice away from people. Why can that make
+   the trip faster for everyone? Would you close the same routes in real life?
 """),
 ])
 
