@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pednstream-workshop"
-version = "1.3.0"
+version = "1.4.0"
 description = "Workshop: how OD weights shape pedestrian flows, using PedNStream"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
-  # PedNStream, pinned to the optimize_path commit this workshop was tested with
-  "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@65c2ff76767227983364e46eac519adf4c055087",
+  # PedNStream, pinned to the od-tracking commit this workshop was tested with
+  "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@4a85236b3c47b17f25c2bfe8d5c0ef35651900a7",
   # used by pednstream but not (yet) declared in its pyproject.toml
   "pyyaml",
   "pandas",

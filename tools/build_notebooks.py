@@ -17,7 +17,7 @@ OUT = ROOT / "notebooks"
 # What students install. Pin to a tag (...git@v1.0) before the workshop so that
 # later pushes to main don't change what students get.
 WORKSHOP_PIP = "pednstream-workshop @ git+https://github.com/WaimenMak/pednstream-workshop.git"
-PEDNSTREAM_PIP = "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@65c2ff76767227983364e46eac519adf4c055087"
+PEDNSTREAM_PIP = "pednstream @ git+https://github.com/WaimenMak/PedNStream.git@4a85236b3c47b17f25c2bfe8d5c0ef35651900a7"
 
 MAP = '''```
             6  City Exit (Y)
@@ -81,7 +81,13 @@ plt.rcParams["figure.dpi"] = 90
 print("✅ Ready! Scroll down and continue.")'''
     # pip skips the install when the same version is already there, and Python keeps an
     # already-imported old copy until the session restarts, so check what got loaded.
+    # The same goes for PedNStream (its version number does not change between commits),
+    # so reinstall it when the installed commit is not the pinned one.
+    commit = PEDNSTREAM_PIP.rsplit("@", 1)[1]
     return f'''%pip install -q "{WORKSHOP_PIP}"
+import json, importlib.metadata as md
+if json.loads(md.distribution("pednstream").read_text("direct_url.json") or "{{}}").get("vcs_info", {{}}).get("commit_id") != "{commit}":
+    %pip install -q --force-reinstall --no-deps "{PEDNSTREAM_PIP}"
 
 import matplotlib.pyplot as plt
 import pednstream_workshop
@@ -150,7 +156,7 @@ Work in pairs: one person clicks, the other writes down predictions. Swap every 
 
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, switch"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, switch", min_version="1.4.0"),
     md(f"""
 ## 0 · Meet *Station Square*
 {MAP}
@@ -375,7 +381,7 @@ Change any value in the form, press ▶, and compare. Each run simulates 50 minu
 {MAP}
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, playground"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, playground", min_version="1.4.0"),
     form('''#@title 🎛️ **Playground**: set the values, then press ▶ {display-mode: "form"}
 #@markdown ### OD weights (relative, per gate)
 A_to_Platform_X = 1  #@param {type:"slider", min:0, max:5, step:0.5}
@@ -450,7 +456,7 @@ The weights only *steer* people, so check what the simulation actually delivers.
 * Post your best valid score on the leaderboard.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, widen", min_version="1.3.0"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, widen", min_version="1.4.0"),
     form('''#@title 🏆 **Your strategy**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
 #@markdown Weight towards the Platform per gate (the rest of the weight goes to the City Exit)
