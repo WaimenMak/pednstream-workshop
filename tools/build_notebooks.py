@@ -150,7 +150,7 @@ Work in pairs: one person clicks, the other writes down predictions. Swap every 
 
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, switch", min_version="1.6.0"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, switch", min_version="1.6.1"),
     md(f"""
 ## 0 · Meet *Station Square*
 {MAP}
@@ -376,7 +376,7 @@ Change any value in the form, press ▶, and compare. Each run simulates 50 minu
 {MAP}
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, playground", min_version="1.6.0"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, playground", min_version="1.6.1"),
     form('''#@title 🎛️ **Playground**: set the values, then press ▶ {display-mode: "form"}
 #@markdown ### OD weights (relative, per gate)
 A_to_Platform_X = 1  #@param {type:"slider", min:0, max:5, step:0.5}
@@ -452,7 +452,7 @@ delivers: people still walking when the clock stops don't count.
 * Post your best valid score on the leaderboard.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, widen", min_version="1.6.0"),
+    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, widen", min_version="1.6.1"),
     form('''#@title 🏆 **Your strategy**: set the values, then press ▶ {display-mode: "form"}
 team_name = "my team"  #@param {type:"string"}
 #@markdown Weight towards the Platform per gate (the rest of the weight goes to the City Exit)

@@ -272,12 +272,16 @@ od_flows:
         make_background([ll[0] for ll in latlon.values()], [ll[1] for ll in latlon.values()])
 
 
-def make_background(lats, lons, margin=0.0015, zoom=16, fade=0.45):
+def make_background(lats, lons, margin=0.0015, aspect=1.8, zoom=16, fade=0.45):
+    """Street map around the network, at least `aspect` times as wide as it is high, so a wide
+    plot (the animation) shows more of the city on both sides instead of white space."""
     import contextily as cx
     import matplotlib.pyplot as plt
 
-    img, extent = cx.bounds2img(min(lons) - margin, min(lats) - margin, max(lons) + margin, max(lats) + margin,
-                                zoom=zoom, source=cx.providers.OpenStreetMap.Mapnik, ll=True, use_cache=False,
+    (x0, y0), (x1, y1) = mercator(min(lats) - margin, min(lons) - margin), mercator(max(lats) + margin, max(lons) + margin)
+    extra = max(0.0, aspect * (y1 - y0) - (x1 - x0)) / 2
+    img, extent = cx.bounds2img(x0 - extra, y0, x1 + extra, y1, zoom=zoom, source=cx.providers.OpenStreetMap.Mapnik,
+                                ll=False, use_cache=False,
                                 headers={"User-Agent": USER_AGENT})  # the OSM tile policy asks apps to identify
     rgb = img[..., :3].astype(float) / 255
     rgb = 0.5 * rgb + 0.5 * rgb.mean(axis=2, keepdims=True)  # half desaturated

@@ -15,6 +15,7 @@ Everything underneath is plain PedNStream (NetworkEnvGenerator + Network).
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +32,11 @@ from pednstream.utils.network_env_generator import NetworkEnvGenerator
 HERE = Path(__file__).resolve().parent
 DEFAULT_NETWORK = HERE / "networks" / "station_square"
 AMSTERDAM = HERE / "networks" / "amsterdam"
+
+# plot_map frames the network and lets a wide panel show more street map (adjustable="datalim");
+# matplotlib then warns at every draw that it widened the limits, which is exactly what we want
+logging.getLogger("matplotlib.axes._base").addFilter(
+    lambda record: "to fulfill fixed data aspect" not in record.getMessage())
 
 
 def _load_names(network_dir) -> dict:
@@ -459,8 +465,12 @@ class Result:
         if bg:
             img, extent, attribution = bg
             ax.imshow(img, extent=extent, zorder=0, interpolation="bilinear")
-            ax.set_xlim(extent[0], extent[1])
-            ax.set_ylim(extent[2], extent[3])
+            # frame the network; a wide panel shows more of the street map left and right
+            xs, ys = [p[0] for p in self.pos.values()], [p[1] for p in self.pos.values()]
+            pad = 0.06 * max(max(xs) - min(xs), max(ys) - min(ys))
+            ax.set_xlim(max(extent[0], min(xs) - pad), min(extent[1], max(xs) + pad))
+            ax.set_ylim(max(extent[2], min(ys) - pad), min(extent[3], max(ys) + pad))
+            ax.set_aspect("equal", adjustable="datalim")
             ax.text(0.99, 0.01, attribution, transform=ax.transAxes, fontsize=6, ha="right", va="bottom",
                     color="#555555", zorder=5)
             ax.set_xticks([]); ax.set_yticks([])
@@ -567,7 +577,7 @@ class Result:
         from matplotlib.animation import FuncAnimation
         from IPython.display import HTML
 
-        fig = plt.figure(figsize=(12, 6.5), dpi=65) if flow else plt.figure(figsize=(6, 6))
+        fig = plt.figure(figsize=(16, 7.5), dpi=65) if flow else plt.figure(figsize=(6, 6))
         frames = range(0, self.steps, every)
 
         def draw(step):
@@ -576,7 +586,7 @@ class Result:
             if not flow:
                 self.plot_map(step=step, ax=fig.add_subplot(111))
                 return
-            gs = fig.add_gridspec(1, 2, width_ratios=[1.1, 1])
+            gs = fig.add_gridspec(1, 2, width_ratios=[1.9, 1])   # most of the width for the map
             self.plot_map(step=step, ax=fig.add_subplot(gs[0]), title=f"Density at minute {minute:.0f}")
             ax = fig.add_subplot(gs[1])
             self.plot_flow(ax=ax)
