@@ -36,11 +36,11 @@ def _load_names(network_dir) -> dict:
     """names.json next to sim_params.yaml: display names per node (+ short names for KPIs)."""
     path = Path(network_dir) / "names.json"
     if not path.exists():
-        return {"names": {}, "short": {}, "streets": {}}
+        return {"names": {}, "short": {}, "streets": {}, "label_side": {}}
     with open(path) as f:
         raw = json.load(f)
     return {k: {(int(n) if "_" not in n else n): v for n, v in raw.get(k, {}).items()}
-            for k in ("names", "short", "streets")}
+            for k in ("names", "short", "streets", "label_side")}
 
 
 NODE_NAMES = _load_names(DEFAULT_NETWORK)["names"]
@@ -324,6 +324,19 @@ class Result:
                 self._pos = {int(k): v for k, v in json.load(f).items()}
         return self._pos
 
+    @property
+    def background(self):
+        """(image, extent, attribution) of the street map behind the network, or None."""
+        if not hasattr(self, "_background"):
+            img_path = Path(self.network_dir) / "background.jpg"
+            meta_path = Path(self.network_dir) / "background.json"
+            self._background = None
+            if img_path.exists() and meta_path.exists():
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                self._background = (plt.imread(img_path), meta["extent"], meta.get("attribution", ""))
+        return self._background
+
     def plot_map(self, step: Optional[int] = None, ax=None, title: Optional[str] = None, vmax: float = 6):
         """Network coloured by density. step=None -> the moment of highest density."""
         if step is None:
@@ -339,22 +352,39 @@ class Result:
             w = self.network.links[(u, v)].width
             widths.append(w * 3 if Path(self.network_dir) == DEFAULT_NETWORK else 4 * np.sqrt(w))
         norm = Normalize(0, vmax)
-        lc = LineCollection(segs, cmap="RdYlGn_r", norm=norm, linewidths=widths, capstyle="round")
+        bg = self.background
+        lc = LineCollection(segs, cmap="RdYlGn_r", norm=norm, linewidths=widths, capstyle="round",
+                            alpha=0.85 if bg else 1, zorder=2)
         lc.set_array(np.array(cols))
         ax.add_collection(lc)
+        label_box = dict(boxstyle="round,pad=0.15", fc="white", alpha=0.75, lw=0) if bg else None
         for n, (x, y) in self.pos.items():
             colour = "#2e7d32" if n in self.network.origin_nodes else "#c62828" if n in self.network.destination_nodes else "#424242"
             marker = "s" if n in self.network.origin_nodes else "D" if n in self.network.destination_nodes else "o"
-            ax.scatter([x], [y], s=160, c=colour, marker=marker, zorder=3, edgecolor="white")
+            ax.scatter([x], [y], s=260, c=colour, marker=marker, zorder=3, edgecolor="white")
+            ax.text(x, y, str(n), color="white", fontsize=8, fontweight="bold", ha="center", va="center", zorder=4)
             label = self.name(n) if Path(self.network_dir) == DEFAULT_NETWORK else self.name(n).split(" (")[0]
-            ax.annotate(label, (x, y), xytext=(8, 8), textcoords="offset points", fontsize=9)
+            side = self.names["label_side"].get(n, "right")
+            offset, ha, va = {"right": ((10, 8), "left", "bottom"), "left": ((-10, 8), "right", "bottom"),
+                              "below": ((0, -12), "center", "top")}[side]
+            ax.annotate(label, (x, y), xytext=offset, textcoords="offset points", fontsize=9, zorder=5,
+                        ha=ha, va=va, bbox=label_box)
         for c, (u, v) in zip(self.corridors, (_parse_key(c) for c in self.corridors)):
             (x1, y1), (x2, y2) = self.pos[u], self.pos[v]
-            ax.text((x1 + x2) / 2, (y1 + y2) / 2, f"{self.density(c)[step]:.1f}", fontsize=8,
+            ax.text((x1 + x2) / 2, (y1 + y2) / 2, f"{self.density(c)[step]:.1f}", fontsize=8, zorder=4,
                     ha="center", va="center", bbox=dict(boxstyle="round", fc="white", alpha=0.8, lw=0))
         ax.set_aspect("equal")
-        ax.margins(0.25)
-        ax.axis("off")
+        if bg:
+            img, extent, attribution = bg
+            ax.imshow(img, extent=extent, zorder=0, interpolation="bilinear")
+            ax.set_xlim(extent[0], extent[1])
+            ax.set_ylim(extent[2], extent[3])
+            ax.text(0.99, 0.01, attribution, transform=ax.transAxes, fontsize=6, ha="right", va="bottom",
+                    color="#555555", zorder=5)
+            ax.set_xticks([]); ax.set_yticks([])
+        else:
+            ax.margins(0.25)
+            ax.axis("off")
         ax.figure.colorbar(lc, ax=ax, shrink=0.6, label="density (ped/m²)")
         ax.set_title(title or f"Density at minute {step * self.unit_time / 60:.0f}")
         return ax
@@ -463,7 +493,19 @@ class Result:
             fig.tight_layout()
 
         anim = FuncAnimation(fig, draw, frames=frames, interval=120)
-        html = HTML(anim.to_jshtml())
+        if not flow:
+            html = HTML(anim.to_jshtml())
+        else:
+            # JPEG frames: a street map in every frame makes PNG frames ~4x bigger
+            import tempfile
+            from matplotlib.animation import HTMLWriter
+
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "movie.html"
+                writer = HTMLWriter(fps=1000 / 120, embed_frames=True, default_mode="once")
+                writer.frame_format = "jpeg"
+                anim.save(str(path), writer=writer, dpi=fig.dpi)
+                html = HTML(path.read_text())
         plt.close(fig)
         return html
 
