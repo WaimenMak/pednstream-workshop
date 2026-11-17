@@ -6,10 +6,12 @@
 """
 
 from .tools import (
+    AMSTERDAM,
     CORRIDORS,
     DEFAULT_NETWORK,
     NODE_NAMES,
     Result,
+    arrival_plan,
     compare,
     compare_maps,
     playground,
@@ -21,10 +23,12 @@ from .tools import (
 __version__ = "1.0.0"
 
 __all__ = [
+    "AMSTERDAM",
     "CORRIDORS",
     "DEFAULT_NETWORK",
     "NODE_NAMES",
     "Result",
+    "arrival_plan",
     "compare",
     "compare_maps",
     "playground",

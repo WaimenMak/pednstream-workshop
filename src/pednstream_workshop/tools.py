@@ -29,16 +29,21 @@ from pednstream.utils.network_env_generator import NetworkEnvGenerator
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_NETWORK = HERE / "networks" / "station_square"
+AMSTERDAM = HERE / "networks" / "amsterdam"
 
-NODE_NAMES = {
-    0: "West Gate (A)",
-    1: "South Gate (B)",
-    2: "Plaza",
-    3: "Hall",
-    4: "Mall Jct",
-    5: "Platform (X)",
-    6: "City Exit (Y)",
-}
+
+def _load_names(network_dir) -> dict:
+    """names.json next to sim_params.yaml: display names per node (+ short names for KPIs)."""
+    path = Path(network_dir) / "names.json"
+    if not path.exists():
+        return {"names": {}, "short": {}, "streets": {}}
+    with open(path) as f:
+        raw = json.load(f)
+    return {k: {(int(n) if "_" not in n else n): v for n, v in raw.get(k, {}).items()}
+            for k in ("names", "short", "streets")}
+
+
+NODE_NAMES = _load_names(DEFAULT_NETWORK)["names"]
 
 CORRIDORS = ["0_2", "1_3", "2_3", "2_4", "3_4", "3_5", "4_6"]
 
@@ -69,6 +74,20 @@ def ramp(start: float, end: float, steps: int = 300) -> np.ndarray:
     return np.linspace(float(start), float(end), steps + 1)
 
 
+def arrival_plan(per_minute: Iterable[float], block_minutes: float = 10, unit_time: float = 10,
+                 steps: int = 720) -> np.ndarray:
+    """People arriving per time step from a list of 'people per minute', one value per block.
+
+    Example: arrival_plan([300, 300, 0, 300]) -> 300 people/min for minutes 0-10 and 10-20,
+    nobody in minutes 20-30, 300/min in minutes 30-40, nobody after that.
+    """
+    per_block = int(round(block_minutes * 60 / unit_time))
+    arr = np.zeros(steps + 1)
+    for i, rate in enumerate(per_minute):
+        arr[i * per_block:(i + 1) * per_block] = float(rate) * unit_time / 60
+    return arr
+
+
 # ----------------------------------------------------------------------------
 # Running a scenario
 # ----------------------------------------------------------------------------
@@ -78,6 +97,7 @@ def run(
     route_choice: Optional[Dict] = None,
     links: Optional[Dict[str, Dict]] = None,
     origins: Optional[Iterable[int]] = None,
+    arrivals: Optional[Dict[int, Iterable[float]]] = None,
     network_dir: Path | str = DEFAULT_NETWORK,
 ) -> "Result":
     """Run one scenario and return a `Result`.
@@ -92,6 +112,9 @@ def run(
         links: link overrides, e.g. {"2_3": {"width": 4}}.
         origins: keep only these gates as origins, e.g. [0] for Gate A alone.
             The other gates and their OD pairs are removed from the model.
+        arrivals: your own arrival pattern per origin: people per time step,
+            e.g. {0: arrival_plan([300, 300, 0, 300])}. Replaces `demand` for that origin.
+        network_dir: which network to load, e.g. AMSTERDAM. Default: Station Square.
     """
     gen = NetworkEnvGenerator()
     gen.network_data = gen.load_network_data(str(network_dir))
@@ -114,18 +137,38 @@ def run(
         od_flows = {od: w for od, w in od_flows.items() if _parse_key(od)[0] in origins}
         od_nodes = {"origin_nodes": origins}
 
+    demand_overrides = {f"origin_{o}": p for o, p in (demand or {}).items()}
+    custom = []
+    for o, pattern in (arrivals or {}).items():
+        values = np.zeros(steps + 1)
+        pattern = np.asarray(pattern, dtype=float)[: steps + 1]
+        values[: len(pattern)] = pattern
+
+        def fixed_arrivals(origin_id, params=None, _v=values):
+            return _v.copy()
+
+        fixed_arrivals.__name__ = f"workshop_arrivals_{o}"   # PedNStream registers patterns by name
+        custom.append(fixed_arrivals)
+        demand_overrides[f"origin_{o}"] = {"pattern": fixed_arrivals.__name__}
+
+    if custom:
+        # built-in demand patterns reseed numpy themselves; ours don't, so seed here
+        # to make every run with the same plan give exactly the same result
+        np.random.seed(params.get("seed", 42))
     net = gen.create_network(
         str(network_dir),
         od_flows=od_flows,
-        demand_params_overrides={f"origin_{o}": p for o, p in (demand or {}).items()},
+        demand_params_overrides=demand_overrides,
         link_params_overrides=links or {},
         od_nodes_overrides=od_nodes,
+        custom_demand_functions=custom,
         verbose=False,
     )
     for t in range(1, steps):
         net.network_loading(t)
 
-    return Result(network=net, steps=steps, unit_time=params["unit_time"], od=od_flows)
+    return Result(network=net, steps=steps, unit_time=params["unit_time"], od=od_flows,
+                  network_dir=Path(network_dir))
 
 
 # ----------------------------------------------------------------------------
@@ -137,7 +180,39 @@ class Result:
     steps: int
     unit_time: float
     od: dict
+    network_dir: Path = DEFAULT_NETWORK
     _pos: dict = field(default=None, repr=False)
+    _names: dict = field(default=None, repr=False)
+
+    # --- network description -------------------------------------------------
+    @property
+    def corridors(self) -> list:
+        """Every two-way corridor as 'u_v' (u < v), virtual origin/destination links left out."""
+        if Path(self.network_dir) == DEFAULT_NETWORK:
+            return CORRIDORS
+        keys = {tuple(sorted(k)) for k, l in self.network.links.items()
+                if not str(l.link_id).startswith("virtual")}
+        return [f"{u}_{v}" for u, v in sorted(keys)]
+
+    @property
+    def names(self) -> dict:
+        if self._names is None:
+            self._names = _load_names(self.network_dir)
+        return self._names
+
+    def name(self, node: int) -> str:
+        return self.names["names"].get(node, f"node {node}")
+
+    def short(self, node: int) -> str:
+        return self.names["short"].get(node, self.name(node))
+
+    def corridor_label(self, c: str) -> str:
+        street = self.names["streets"].get(c)
+        return f"{c} {street}" if street else c
+
+    @property
+    def k_critical(self) -> float:
+        return self.link(self.corridors[0]).k_critical
 
     # --- raw series ---------------------------------------------------------
     @property
@@ -159,10 +234,14 @@ class Result:
         """Cumulative people who could NOT enter at a gate because the first
         corridor was full (PedNStream drops this demand, it does not queue it)."""
         node = self.network.nodes[origin]
-        out = next(l for l in node.outgoing_links if not str(l.link_id).startswith("virtual"))
         wanted = np.concatenate([[0.0], np.cumsum(node.demand[: self.steps - 1])])
-        entered = out.cumulative_inflow[: self.steps]
-        return np.maximum(wanted - entered, 0)
+        return np.maximum(wanted - self.entered(origin), 0)
+
+    def entered(self, origin: int) -> np.ndarray:
+        """Cumulative number of people who walked into the network at an origin."""
+        node = self.network.nodes[origin]
+        out = [l for l in node.outgoing_links if not str(l.link_id).startswith("virtual")]
+        return sum(l.cumulative_inflow[: self.steps] for l in out)
 
     def arrivals(self, dest: int) -> np.ndarray:
         """Cumulative number of people who reached a destination."""
@@ -178,18 +257,17 @@ class Result:
         blocked = sum(self.turned_away(o)[-1] for o in origins)
         arrived = {d: self.arrivals(d)[-1] for d in dests}
         in_net = sum(l.num_pedestrians[: self.steps] for l in self.network.links.values())
-        dens = {c: self.density(c).max() for c in CORRIDORS}
+        dens = {c: self.density(c).max() for c in self.corridors}
         worst = max(dens, key=dens.get)
-        k_crit = self.network.links[(2, 3)].k_critical
-        congested_minutes = sum((self.density(c) > k_crit).sum() for c in CORRIDORS) * self.unit_time / 60
+        k_crit = self.k_critical
+        congested_minutes = sum((self.density(c) > k_crit).sum() for c in self.corridors) * self.unit_time / 60
         return pd.Series(
             {
                 "total demand (people)": round(demand),
-                "reached Platform X": round(arrived.get(5, 0)),
-                "reached City Exit Y": round(arrived.get(6, 0)),
+                **{f"reached {self.short(d)}": round(arrived[d]) for d in dests},
                 "turned away at gates": round(blocked),
                 "still inside at end": round(demand - blocked - sum(arrived.values())),
-                "worst corridor": worst,
+                "worst corridor": self.corridor_label(worst),
                 "peak density there (ped/m²)": round(dens[worst], 2),
                 "corridor-minutes congested": round(congested_minutes, 1),
                 "time spent inside (person-hours)": round(in_net.sum() * self.unit_time / 3600, 1),
@@ -198,15 +276,15 @@ class Result:
 
     def link_table(self) -> pd.DataFrame:
         rows = []
-        for c in CORRIDORS:
+        for c in self.corridors:
             u, v = _parse_key(c)
             fwd = self.network.links[(u, v)]
             bwd = self.network.links[(v, u)]
             d = self.density(c)
             rows.append(
                 {
-                    "corridor": c,
-                    "from → to": f"{NODE_NAMES[u]} → {NODE_NAMES[v]}",
+                    "corridor": self.corridor_label(c),
+                    "from → to": f"{self.name(u)} → {self.name(v)}",
                     "width (m)": fwd.width,
                     "length (m)": fwd.length,
                     "people through": round(fwd.cumulative_inflow[self.steps - 1] + bwd.cumulative_inflow[self.steps - 1]),
@@ -242,23 +320,24 @@ class Result:
     @property
     def pos(self) -> dict:
         if self._pos is None:
-            with open(DEFAULT_NETWORK / "node_positions.json") as f:
+            with open(Path(self.network_dir) / "node_positions.json") as f:
                 self._pos = {int(k): v for k, v in json.load(f).items()}
         return self._pos
 
     def plot_map(self, step: Optional[int] = None, ax=None, title: Optional[str] = None, vmax: float = 6):
         """Network coloured by density. step=None -> the moment of highest density."""
         if step is None:
-            total = sum(self.density(c) for c in CORRIDORS)
+            total = sum(self.density(c) for c in self.corridors)
             step = int(total.argmax())
         if ax is None:
             _, ax = plt.subplots(figsize=(6, 6))
         segs, cols, widths = [], [], []
-        for c in CORRIDORS:
+        for c in self.corridors:
             u, v = _parse_key(c)
             segs.append([self.pos[u], self.pos[v]])
             cols.append(self.density(c)[step])
-            widths.append(self.network.links[(u, v)].width * 3)
+            w = self.network.links[(u, v)].width
+            widths.append(w * 3 if Path(self.network_dir) == DEFAULT_NETWORK else 4 * np.sqrt(w))
         norm = Normalize(0, vmax)
         lc = LineCollection(segs, cmap="RdYlGn_r", norm=norm, linewidths=widths, capstyle="round")
         lc.set_array(np.array(cols))
@@ -267,15 +346,16 @@ class Result:
             colour = "#2e7d32" if n in self.network.origin_nodes else "#c62828" if n in self.network.destination_nodes else "#424242"
             marker = "s" if n in self.network.origin_nodes else "D" if n in self.network.destination_nodes else "o"
             ax.scatter([x], [y], s=160, c=colour, marker=marker, zorder=3, edgecolor="white")
-            ax.annotate(NODE_NAMES[n], (x, y), xytext=(8, 8), textcoords="offset points", fontsize=9)
-        for c, (u, v) in zip(CORRIDORS, (_parse_key(c) for c in CORRIDORS)):
+            label = self.name(n) if Path(self.network_dir) == DEFAULT_NETWORK else self.name(n).split(" (")[0]
+            ax.annotate(label, (x, y), xytext=(8, 8), textcoords="offset points", fontsize=9)
+        for c, (u, v) in zip(self.corridors, (_parse_key(c) for c in self.corridors)):
             (x1, y1), (x2, y2) = self.pos[u], self.pos[v]
             ax.text((x1 + x2) / 2, (y1 + y2) / 2, f"{self.density(c)[step]:.1f}", fontsize=8,
                     ha="center", va="center", bbox=dict(boxstyle="round", fc="white", alpha=0.8, lw=0))
         ax.set_aspect("equal")
         ax.margins(0.25)
         ax.axis("off")
-        plt.colorbar(lc, ax=ax, shrink=0.6, label="density (ped/m²)")
+        ax.figure.colorbar(lc, ax=ax, shrink=0.6, label="density (ped/m²)")
         ax.set_title(title or f"Density at minute {step * self.unit_time / 60:.0f}")
         return ax
 
@@ -284,13 +364,52 @@ class Result:
         if ax is None:
             _, ax = plt.subplots(figsize=(9, 4))
         minutes = self.t * self.unit_time / 60
-        for c in corridors or CORRIDORS:
-            ax.plot(minutes, self.density(c), label=c)
-        ax.axhline(self.network.links[(2, 3)].k_critical, ls="--", c="grey", lw=1)
+        if corridors is None:
+            corridors = self.corridors
+            if Path(self.network_dir) != DEFAULT_NETWORK:   # big network: only the busy ones
+                corridors = [c for c in corridors if self.density(c).max() > 0.1 * self.k_critical]
+        for c in corridors:
+            ax.plot(minutes, self.density(c), label=self.corridor_label(c))
+        ax.axhline(self.k_critical, ls="--", c="grey", lw=1)
         ax.set_xlabel("minute")
         ax.set_ylabel("density (ped/m²)")
         ax.legend(ncol=4, fontsize=8)
         ax.set_title(title or "Density per corridor")
+        return ax
+
+    def people_on(self, key: str) -> np.ndarray:
+        """Number of people on a corridor, both directions added up."""
+        u, v = _parse_key(key)
+        n = self.network.links[(u, v)].num_pedestrians[: self.steps].astype(float)
+        if (v, u) in self.network.links:
+            n = n + self.network.links[(v, u)].num_pedestrians[: self.steps]
+        return n
+
+    def plot_flow(self, ax=None, title: Optional[str] = None):
+        """People per minute leaving the origin(s) vs arriving at the destination(s),
+        with the number of people inside the network on a second axis."""
+        if ax is None:
+            _, ax = plt.subplots(figsize=(9, 4))
+        minutes = self.t * self.unit_time / 60
+        scale = 60 / self.unit_time
+
+        def rate(cum):
+            return np.diff(cum, prepend=0) * scale
+
+        departures = sum(self.entered(o) for o in self.network.origin_nodes)
+        arrivals = sum(self.arrivals(d) for d in self.network.destination_nodes)
+        ax.fill_between(minutes, rate(departures), step="pre", alpha=0.35, color="tab:blue", label="leaving the station (your plan)")
+        ax.plot(minutes, rate(arrivals), color="tab:red", lw=2, label="arriving at the destination")
+        ax.set_xlabel("minute")
+        ax.set_ylabel("people per minute")
+        ax2 = ax.twinx()
+        ax2.plot(minutes, departures - arrivals, color="black", ls="--", lw=1, label="people on the streets")
+        ax2.set_ylabel("people on the streets")
+        ax2.set_ylim(bottom=0)
+        h1, l1 = ax.get_legend_handles_labels()
+        h2, l2 = ax2.get_legend_handles_labels()
+        ax.legend(h1 + h2, l1 + l2, fontsize=8, loc="upper right")
+        ax.set_title(title or "In and out")
         return ax
 
     def plot_arrivals(self, ax=None, title: Optional[str] = None):
@@ -299,36 +418,49 @@ class Result:
             _, ax = plt.subplots(figsize=(9, 4))
         minutes = self.t * self.unit_time / 60
         for d in self.network.destination_nodes:
-            ax.plot(minutes, self.arrivals(d), label=f"arrived at {NODE_NAMES[d]}")
+            ax.plot(minutes, self.arrivals(d), label=f"arrived at {self.name(d)}")
         for o in self.network.origin_nodes:
-            ax.plot(minutes, self.turned_away(o), ls=":", label=f"turned away at {NODE_NAMES[o]}")
+            ax.plot(minutes, self.turned_away(o), ls=":", label=f"turned away at {self.name(o)}")
         ax.set_xlabel("minute")
         ax.set_ylabel("people")
         ax.legend(fontsize=8)
         ax.set_title(title or "Arrivals and people turned away")
         return ax
 
-    def dashboard(self, title: str = ""):
+    def dashboard(self, title: str = "", flow: bool = False):
+        """Map + density over time + arrivals (flow=True: people per minute in and out instead)."""
         fig = plt.figure(figsize=(14, 6))
         gs = fig.add_gridspec(2, 2, width_ratios=[1, 1.4])
         self.plot_map(ax=fig.add_subplot(gs[:, 0]))
         self.plot_links(ax=fig.add_subplot(gs[0, 1]))
-        self.plot_arrivals(ax=fig.add_subplot(gs[1, 1]))
+        (self.plot_flow if flow else self.plot_arrivals)(ax=fig.add_subplot(gs[1, 1]))
         fig.suptitle(title)
         fig.tight_layout()
         return fig
 
-    def animate(self, every: int = 3):
-        """Animated map (returns HTML to display in a notebook)."""
+    def animate(self, every: int = 3, flow: bool = False):
+        """Animated map (returns HTML to display in a notebook).
+
+        flow=True adds the 'In and out' plot next to the map, with a line marking the current minute.
+        """
         from matplotlib.animation import FuncAnimation
         from IPython.display import HTML
 
-        fig, ax = plt.subplots(figsize=(6, 6))
+        fig = plt.figure(figsize=(12, 6.5), dpi=65) if flow else plt.figure(figsize=(6, 6))
         frames = range(0, self.steps, every)
 
         def draw(step):
             fig.clf()
-            self.plot_map(step=step, ax=fig.add_subplot(111))
+            minute = step * self.unit_time / 60
+            if not flow:
+                self.plot_map(step=step, ax=fig.add_subplot(111))
+                return
+            gs = fig.add_gridspec(1, 2, width_ratios=[1.1, 1])
+            self.plot_map(step=step, ax=fig.add_subplot(gs[0]), title=f"Density at minute {minute:.0f}")
+            ax = fig.add_subplot(gs[1])
+            self.plot_flow(ax=ax)
+            ax.axvline(minute, color="black", lw=2)
+            fig.tight_layout()
 
         anim = FuncAnimation(fig, draw, frames=frames, interval=120)
         html = HTML(anim.to_jshtml())

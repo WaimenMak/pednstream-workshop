@@ -1,0 +1,9 @@
+{
+  "names": {"0": "Centraal Station", "9": "Stationsplein", "1": "Dam (Madame Tussauds)", "2": "Westermarkt (Anne Frank)",
+            "3": "Nieuwmarkt", "4": "Muntplein", "5": "Waterlooplein (Rembrandthuis)", "6": "Leidseplein",
+            "7": "Rijksmuseum", "8": "Museumplein"},
+  "short": {"8": "Museumplein"},
+  "streets": {"0_9": "station hall", "1_9": "Damrak", "2_9": "Haarlemmerstraat", "3_9": "Zeedijk", "1_2": "Raadhuisstraat",
+              "1_4": "Kalverstraat", "2_6": "Prinsengracht", "3_5": "Jodenbreestraat", "4_5": "Amstel", "4_6": "Leidsestraat",
+              "4_7": "Vijzelstraat", "5_7": "Weteringschans", "6_8": "Hobbemastraat", "7_8": "Rijksmuseum passage"}
+}
