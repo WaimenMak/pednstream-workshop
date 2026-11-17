@@ -437,94 +437,7 @@ display(res.animate(every=4))'''),
 # =============================================================================
 write("03_challenge.ipynb", [
     md(f"""
-# Part 3 · Challenge: you are the station manager
-{MAP}
-With signs, staff and app messages you can steer **which destination people from each gate head for**
-(think *"Platform entrance via the South Gate"*). In model terms: **you choose the OD weights.**
-Each person keeps the destination your weights give them, but check what the simulation actually
-delivers: people still walking when the clock stops don't count.
-
-### Rules
-* Gate demand is fixed.
-* The train company requires that **at least 60%** of everyone who reaches a destination arrives at the
-  **Platform X**. This is measured in the **simulation**, not read off your weights.
-* **Score = time spent inside (person-hours) + 0.25 h for every person turned away. Lower is better.**
-* Post your best valid score on the leaderboard.
-{HOW_TO}
-"""),
-    *setup("from pednstream_workshop import run, compare, compare_maps, AMSTERDAM, arrival_plan, route_plan, show_routes", min_version="1.7.0"),
-    form('''#@title 🏆 **Your strategy**: set the values, then press ▶ {display-mode: "form"}
-team_name = "my team"  #@param {type:"string"}
-#@markdown Weight towards the Platform per gate (the rest of the weight goes to the City Exit)
-weight_Gate_A_to_Platform = 0.6  #@param {type:"slider", min:0, max:1, step:0.05}
-weight_Gate_B_to_Platform = 0.6  #@param {type:"slider", min:0, max:1, step:0.05}
-#@markdown **Bonus round only**: widen one corridor by 2 m (leave at "none" for the main round)
-upgrade = "none"  #@param ["none", "0_2", "1_3", "2_3", "2_4", "3_4", "3_5", "4_6"]
-
-a, b = weight_Gate_A_to_Platform, weight_Gate_B_to_Platform
-links = {}
-if upgrade != "none":
-    base_width = run().link(upgrade).width
-    links = {upgrade: {"width": base_width + 2}}
-res = run(od={"0_5": a, "0_6": 1 - a, "1_5": b, "1_6": 1 - b}, links=links)
-k = res.kpis()
-score = k["time spent inside (person-hours)"] + 0.25 * k["turned away at gates"]
-to_X = k["reached Platform X"] / (k["reached Platform X"] + k["reached City Exit Y"])
-valid = to_X >= 0.6
-
-if "attempts" not in globals():
-    attempts = []
-attempts.append({"team": team_name, "A→X": a, "B→X": b, "upgrade": upgrade,
-                 "delivered to X": f"{to_X:.1%}", "valid": "✅" if valid else "❌", "score": round(float(score), 1)})
-
-print(("✅ Valid strategy" if valid else "❌ BREAKS the 60% rule: this score does not count") +
-      f"  ({to_X:.1%} of arrivals reached the Platform; weights asked for {(a + b) / 2:.0%})")
-print(f"\\n   SCORE = {score:.1f}     (time inside {k['time spent inside (person-hours)']:.1f} h, turned away {k['turned away at gates']})\\n")
-if valid:
-    print(f"📋 Leaderboard line:  {team_name} | A→X {a:.2f} | B→X {b:.2f} | upgrade {upgrade} | score {score:.1f}")
-res.dashboard(f"{team_name}: A→X {a:.0%}, B→X {b:.0%}"); plt.show()
-import pandas as pd
-print("Your attempts so far (best first):")
-display(pd.DataFrame(attempts).sort_values(["valid", "score"], ascending=[False, True]).reset_index(drop=True))'''),
-    md("""
-### Stuck? Hints (open one at a time)
-<details><summary>Hint 1</summary>Look at the map of your strategy: which corridors are red, and which OD groups walk through them?</details>
-<details><summary>Hint 2</summary>Gate B has only <b>one</b> route to the Platform, and it shares nothing with Gate A's routes.</details>
-<details><summary>Hint 3</summary>Remember Exercise 2: the crossing pattern was expensive, the parallel one was cheap.</details>
-<details><summary>Hint 4</summary>Just missed 60%? A few people are still walking when the clock stops, and whole people are moved per step. Nudge one weight up a little.</details>
-
----
-### For coders (optional): search systematically
-Instead of guessing, scan every combination and draw a heat-map of the score. Edit and run the cell below.
-"""),
-    code('''import numpy as np
-shares = np.round(np.arange(0, 1.01, 0.1), 1)
-scores = np.full((len(shares), len(shares)), np.nan)
-for i, a in enumerate(shares):
-    for j, b in enumerate(shares):
-        if (a + b) / 2 < 0.5:
-            continue                       # far too few to X, skip to save time
-        k = run(od={"0_5": a, "0_6": 1 - a, "1_5": b, "1_6": 1 - b}).kpis()
-        if k["reached Platform X"] / (k["reached Platform X"] + k["reached City Exit Y"]) < 0.6:
-            continue                       # breaks the 60% rule
-        scores[i, j] = k["time spent inside (person-hours)"] + 0.25 * k["turned away at gates"]
-
-plt.imshow(scores, origin="lower", cmap="viridis_r")
-plt.xticks(range(len(shares)), shares); plt.yticks(range(len(shares)), shares)
-plt.xlabel("Gate B weight to Platform"); plt.ylabel("Gate A weight to Platform")
-plt.colorbar(label="score (lower is better)"); plt.title("Challenge score"); plt.show()
-i, j = np.unravel_index(np.nanargmin(scores), scores.shape)
-print(f"Best on this grid: A→X {shares[i]}, B→X {shares[j]}, score {scores[i, j]:.1f}")'''),
-    md("""
-### Reflection
-1. Describe your winning strategy in words a station manager would understand.
-2. Why does it work? Name specific corridors.
-3. In the bonus round, did one wider corridor help more or less than a smart OD strategy?
-4. Name one thing the model leaves out that could make your strategy fail in real life.
-"""),
-    md(f"""
----
-# Challenge 2 · Event day: from Centraal Station to Museumplein
+# Part 3 · Challenge: event day from Centraal Station to Museumplein
 {AMS_MAP}
 A big open-air event starts on **Museumplein** and the trains bring thousands of visitors into
 **Amsterdam Centraal**. Stewards on the platforms decide **how many people per minute** are let out of
@@ -551,9 +464,11 @@ All 5 start at Stationsplein, so stewards there can send people away from a rout
   So a visitor whose trip takes longer than an hour costs more than they bring in. With a 50-minute walk
   there is not much room for queueing! **Higher is better.**
 * Post your best score on the leaderboard.
+{HOW_TO}
 """),
+    *setup("from pednstream_workshop import run, AMSTERDAM, arrival_plan, route_plan, show_routes", min_version="1.7.0"),
     md("""
-## ▶ Step 2: load the Amsterdam tools and look at the 5 routes (if you skipped Challenge 1, run Step 1 first)
+## ▶ Step 2: load the Amsterdam tools and look at the 5 routes
 Routes that share a street run side by side on this map. The route numbers are the ones you open and close below.
 """),
     code('''import pandas as pd

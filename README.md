@@ -25,7 +25,7 @@ Nothing to install. Sign in with a Google account, run the first cell, and follo
 |---|---|---|---|
 | 1 · Guided exercises | Predict, run, explain: four exercises with sliders | ~50 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/01_od_weights_guided.ipynb) |
 | 2 · Playground | Free exploration: OD weights, demand, route choice, width | ~20 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/02_playground.ipynb) |
-| 3 · Challenge | Be the station manager, then plan an event day from Amsterdam Centraal to Museumplein | ~30 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/03_challenge.ipynb) |
+| 3 · Challenge | Plan an event day from Amsterdam Centraal to Museumplein: arrival pattern and route closures | ~30 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/03_challenge.ipynb) |
 | 4 · Your own research | Use PedNStream directly: your own network, overrides, a parameter sweep | ~30 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/04_pednstream_in_your_research.ipynb) |
 
 Parts 1–3 need no coding: every exercise is a form with sliders. Part 4 is for those who want to see
@@ -79,7 +79,7 @@ res.kpis()               # headline numbers
 res.link_table()         # per corridor
 res.route_split()        # how each OD pair splits over its routes
 
-# Challenge 2: Amsterdam (Centraal Station -> Museumplein) with your own arrival pattern
+# Part 3 challenge: Amsterdam (Centraal Station -> Museumplein) with your own arrival pattern
 from pednstream_workshop import AMSTERDAM, arrival_plan
 res = run(network_dir=AMSTERDAM, arrivals={0: arrival_plan([300, 300, 0, 300, 300, 300])})  # people/min per 10-min block
 res.dashboard(flow=True) # map + density + people per minute in and out
