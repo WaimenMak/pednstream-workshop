@@ -282,6 +282,24 @@ class Result:
         street = self.names["streets"].get(c)
         return f"{c} {street}" if street else c
 
+    def busiest_streets(self, n: int = 5) -> list:
+        """The n streets with the highest peak density, as [(street, its most crowded corridor, colour)].
+        The density chart and the map use the same list and colours, so every street in the legend
+        is also labelled on the map."""
+        if not hasattr(self, "_busiest"):
+            best = {}
+            for c in self.corridors:
+                street = self.names["streets"].get(c)
+                if street in (None, "station hall"):
+                    continue
+                peak = self.density(c).max()
+                if peak > best.get(street, ("", -1.0))[1]:
+                    best[street] = (c, peak)
+            ranked = [s for s in sorted(best, key=lambda s: -best[s][1]) if best[s][1] > 0.1 * self.k_critical]
+            colours = plt.get_cmap("tab10").colors
+            self._busiest = [(s, best[s][0], colours[i % 10]) for i, s in enumerate(ranked[:10])]
+        return self._busiest[:n]
+
     @property
     def k_critical(self) -> float:
         return self.link(self.corridors[0]).k_critical
@@ -471,12 +489,35 @@ class Result:
             ax.set_xlim(max(extent[0], min(xs) - pad), min(extent[1], max(xs) + pad))
             ax.set_ylim(max(extent[2], min(ys) - pad), min(extent[3], max(ys) + pad))
             ax.set_aspect("equal", adjustable="datalim")
-            ax.text(0.99, 0.01, attribution, transform=ax.transAxes, fontsize=6, ha="right", va="bottom",
-                    color="#555555", zorder=5)
+            ax.text(0.01, 0.01, attribution, transform=ax.transAxes, fontsize=6, ha="left", va="bottom",
+                    color="#555555", zorder=5)   # bottom left: the street labels sit on the right
             ax.set_xticks([]); ax.set_yticks([])
         else:
             ax.margins(0.25)
             ax.axis("off")
+        if street_map:
+            # name the busiest streets, in the colours of the density chart: a column of labels along
+            # the right edge, each with a line to the street, so they never cover each other
+            ys = [p[1] for p in self.pos.values()]
+            gap = 0.06 * (max(ys) - min(ys))
+            labels = []
+            for street, c, colour in self.busiest_streets():
+                u, v = _parse_key(c)
+                (x1, y1), (x2, y2) = self.pos[u], self.pos[v]
+                labels.append((street, colour, ((x1 + x2) / 2, (y1 + y2) / 2)))
+            labels.sort(key=lambda l: -l[2][1])   # top to bottom
+            slots = []
+            for _, _, (x, y) in labels:
+                slots.append(y if not slots else min(y, slots[-1] - gap))
+            lowest = ax.get_ylim()[0] + 0.6 * gap   # keep the column inside the map
+            if slots and slots[-1] < lowest:
+                shift = lowest - slots[-1]
+                slots = [sl + shift for sl in slots]
+            for (street, colour, (x, y)), slot in zip(labels, slots):
+                ax.annotate(street, (x, y), xytext=(0.98, slot), textcoords=ax.get_yaxis_transform(),
+                            fontsize=7, color="white", fontweight="bold", ha="right", va="center", zorder=6,
+                            bbox=dict(boxstyle="round,pad=0.25", fc=colour, lw=0, alpha=0.95),
+                            arrowprops=dict(arrowstyle="-", color=colour, lw=1.2, alpha=0.9))
         ax.figure.colorbar(lc, ax=ax, shrink=0.6, label="density (ped/m²)")
         ax.set_title(title or f"Density at minute {step * self.unit_time / 60:.0f}")
         return ax
@@ -487,15 +528,10 @@ class Result:
             _, ax = plt.subplots(figsize=(9, 4))
         minutes = self.t * self.unit_time / 60
         if corridors is None and self.names["streets"] and len(self.corridors) > 20:
-            # big network: one line per street (its most crowded link), busy streets only
-            by_street = {}
-            for c in self.corridors:
-                by_street.setdefault(self.names["streets"].get(c, c), []).append(self.density(c))
-            worst = {street: np.max(dens, axis=0) for street, dens in by_street.items()}
-            busiest = sorted(worst, key=lambda s: -worst[s].max())[:8]   # the 8 most crowded streets
-            for street in busiest:
-                if worst[street].max() > 0.1 * self.k_critical:
-                    ax.plot(minutes, worst[street], label=street)
+            # big network: the busiest streets only, each as the density on its most crowded
+            # stretch (the one labelled on the map, in the same colour)
+            for street, c, colour in self.busiest_streets():
+                ax.plot(minutes, self.density(c), color=colour, lw=2, label=street)
             corridors = []
         elif corridors is None:
             corridors = self.corridors
@@ -505,7 +541,8 @@ class Result:
         ax.set_xlabel("minute")
         ax.set_ylabel("density (ped/m²)")
         ax.legend(ncol=4, fontsize=8)
-        ax.set_title(title or ("Density on the most crowded streets" if not corridors else "Density per corridor"))
+        ax.set_title(title or ("Density on the most crowded streets (labelled on the map)" if not corridors
+                               else "Density per corridor"))
         return ax
 
     def people_on(self, key: str) -> np.ndarray:
