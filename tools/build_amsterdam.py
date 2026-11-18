@@ -12,7 +12,12 @@ build-pedestrian-dataset workflow:
   5. give every corridor its OSM length, and a width from the OSM `width` tag or from the
      street type (WIDTH below); Damrak is set very wide on purpose (DAMRAK_WIDTH);
   6. add the station itself (node 0) with a short, wide hall to Stationsplein, so the
-     station has exactly one exit.
+     station has exactly one exit;
+  7. let PedNStream pick its routes on this full street map, then keep only the streets on
+     those routes for the simulation. Nobody can walk anywhere else, so the other streets
+     only cost time (a run is ~3x faster without them); they are still drawn on the maps
+     (other_streets.json). Main places that no route passes stay as unconnected nodes, so
+     every place keeps its number and its label.
 
 Writes, in src/pednstream_workshop/networks/amsterdam/:
   adj_matrix.npy        binary adjacency matrix (PedNStream loads it when the YAML has none)
@@ -20,9 +25,11 @@ Writes, in src/pednstream_workshop/networks/amsterdam/:
   sim_params.yaml       simulation settings, corridor widths, demand and OD
   node_positions.json   node -> [x, y] in Web Mercator metres (EPSG:3857), for the plots
   names.json            names of the main places and the street name of every corridor
+  other_streets.json    the streets that are not simulated, as [[x1, y1], [x2, y2]] segments
   background.jpg/.json  faded OpenStreetMap background (only with --refresh-map or if missing)
 
-Needs `pip install osmnx contextily` (facilitators only; students never run this):
+Needs `pip install osmnx contextily` and the workshop package itself (facilitators only;
+students never run this):
     python tools/build_amsterdam.py [--refresh-map]
 """
 
@@ -31,6 +38,7 @@ import math
 import pickle
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import networkx as nx
@@ -54,6 +62,7 @@ WIDTH = {         # effective walking width (m) per OSM highway type, when the w
 }
 MAX_WIDTH = 12    # cap for streets with many parallel ways (except Damrak)
 DAMRAK_WIDTH = 20
+K_PATHS = 8       # routes PedNStream may offer (diverse_paths stops earlier if they get too long)
 SQUARE_WIDTH = 10  # Museumplein is an open square: its paths into the destination are at least this wide
 
 # Main places (latitude, longitude): they get the low node numbers and a label on the map.
@@ -170,15 +179,10 @@ def main():
     idx = {n: i for i, n in enumerate(order) if n is not None}
     N = len(order)
 
-    adj = np.zeros((N, N), dtype=np.int8)
-    dist, widths, streets = {}, {}, {}
+    corridors = {}   # (i, j) with i < j -> (length, width, street)
 
     def add(i, j, length, width, street):
-        key = f"{min(i, j)}_{max(i, j)}"
-        adj[i, j] = adj[j, i] = 1
-        dist[(i, j)] = dist[(j, i)] = round(max(length, 5.0), 1)
-        widths[key] = round(width, 1)
-        streets[key] = street
+        corridors[(min(i, j), max(i, j))] = (round(max(length, 5.0), 1), round(width, 1), street)
 
     add(0, 1, 100, 30, "station hall")  # 6. inside the station: not on the walking network
     for u, v, d in U.edges(data=True):
@@ -190,33 +194,81 @@ def main():
             street, width = "Museumplein", max(width, SQUARE_WIDTH)
         add(idx[u], idx[v], d["length"], width, street)
 
-    np.save(OUT / "adj_matrix.npy", adj)
-    with open(OUT / "edge_distances.pkl", "wb") as f:
-        pickle.dump(dist, f)
-
     latlon = {0: PLACES[0][1]}
     latlon.update({i: to_latlon(U.nodes[n]["x"], U.nodes[n]["y"]) for n, i in idx.items()})
-    positions = {str(i): [round(c, 1) for c in mercator(*ll)] for i, ll in sorted(latlon.items())}
-    (OUT / "node_positions.json").write_text(json.dumps(positions) + "\n")
-    (OUT / "names.json").write_text(json.dumps({
+    positions = {i: [round(c, 1) for c in mercator(*ll)] for i, ll in sorted(latlon.items())}
+
+    # 7. PedNStream picks its routes on the full street map; simulate only the streets on them
+    with tempfile.TemporaryDirectory() as tmp:
+        write_network(Path(tmp), N, corridors, positions, other_streets=[], k_paths=K_PATHS)
+        paths = find_routes(Path(tmp))
+    on_route = {tuple(sorted(e)) for p in paths for e in zip(p, p[1:])}
+    kept = sorted(set(range(len(PLACES))) | {n for p in paths for n in p})   # places keep their number
+    new = {n: i for i, n in enumerate(kept)}
+    sim = {(new[i], new[j]): c for (i, j), c in corridors.items() if (i, j) in on_route}
+    other = [[positions[i], positions[j]] for (i, j) in corridors if (i, j) not in on_route]
+    write_network(OUT, len(kept), sim, {new[n]: positions[n] for n in kept}, other, k_paths=len(paths),
+                  full=(N, len(corridors)))
+    expected = [[new[n] for n in p] for p in paths]
+    assert find_routes(OUT) == expected, "the routes changed when the other streets were dropped"
+
+    walk = nx.shortest_path_length(U, place_node[1], place_node[DESTINATION], weight="length")
+    print(f"full street map: {N} nodes, {len(corridors)} corridors; "
+          f"shortest walk Stationsplein -> Museumplein {walk:.0f} m")
+    print(f"simulated: {len(paths)} routes, {len(kept)} nodes, {len(sim)} corridors")
+
+    if "--refresh-map" in sys.argv or not (OUT / "background.jpg").exists():
+        make_background([ll[0] for ll in latlon.values()], [ll[1] for ll in latlon.values()])
+
+
+def find_routes(network_dir):
+    """The routes PedNStream gives people from the station to Museumplein (as node lists)."""
+    from pednstream_workshop.tools import routes
+    return [list(map(int, p)) for p in routes(network_dir)["nodes"]]
+
+
+def write_network(out, n_nodes, corridors, positions, other_streets, k_paths, full=None):
+    """Write the PedNStream files for nodes 0..n_nodes-1 and {(i, j): (length, width, street)}."""
+    adj = np.zeros((n_nodes, n_nodes), dtype=np.int8)
+    dist, streets = {}, {}
+    for (i, j), (length, _, street) in corridors.items():
+        adj[i, j] = adj[j, i] = 1
+        dist[(i, j)] = dist[(j, i)] = length
+        streets[f"{i}_{j}"] = street
+    np.save(out / "adj_matrix.npy", adj)
+    with open(out / "edge_distances.pkl", "wb") as f:
+        pickle.dump(dist, f)
+
+    (out / "node_positions.json").write_text(json.dumps({str(i): xy for i, xy in sorted(positions.items())}) + "\n")
+    (out / "names.json").write_text(json.dumps({
         "names": {str(i): name for i, (name, _) in enumerate(PLACES)},
         "short": {str(DESTINATION): "Museumplein"},
         "streets": streets,
         "label_side": LABEL_SIDE,
-        "minor": list(range(len(PLACES), N)),
+        "minor": list(range(len(PLACES), n_nodes)),
     }, ensure_ascii=False, indent=1) + "\n")
+    (out / "other_streets.json").write_text(json.dumps(other_streets) + "\n")
 
-    link_lines = "\n".join(f'  "{k}": {{width: {w}}}  # {streets[k]}' for k, w in widths.items())
+    link_lines = "\n".join(f'  "{i}_{j}": {{width: {w}}}  # {s}' for (i, j), (_, w, s) in corridors.items())
     places = "\n".join(f"#    {i:2d} {name}" for i, (name, _) in enumerate(PLACES))
+    if full:
+        size = f"""#  {n_nodes} nodes and {len(corridors)} corridors: the streets on the {k_paths} routes PedNStream finds
+#  on the full street map, which has every walkable street within {BAND} m of the line
+#  Stationsplein - Museumplein ({full[0]} nodes, {full[1]} corridors). Nobody can walk anywhere
+#  else, so the other streets are only drawn (other_streets.json), not simulated.
+#  Main places that no route passes are nodes without corridors, so they keep their number."""
+    else:
+        size = f"""#  {n_nodes} nodes and {len(corridors)} corridors: every walkable street within {BAND} m of the line
+#  Stationsplein - Museumplein."""
     yaml = f"""# =====================================================================
 #  "Amsterdam: Centraal to Museumplein": challenge network for PedNStream
 #  GENERATED by tools/build_amsterdam.py straight from the OpenStreetMap
 #  walking network (© OpenStreetMap contributors). Edit that script, not this file.
 # =====================================================================
 #
-#  {N} nodes and {len(widths)} corridors: every walkable street within {BAND} m of the line
-#  Stationsplein - Museumplein. The adjacency matrix is in adj_matrix.npy and the corridor
-#  lengths (measured along OSM) are in edge_distances.pkl. Main places:
+{size}
+#  The adjacency matrix is in adj_matrix.npy and the corridor lengths (measured along OSM)
+#  are in edge_distances.pkl. Main places:
 {places}
 #
 #  Widths are 'effective' walking widths: the OSM width tag, or a default per street type,
@@ -236,7 +288,7 @@ simulation:
   assign_flows_type: "classic"
   od_tracking: true      # each person keeps their destination (OD pair) all the way
   path_finder:
-    k_paths: 8             # up to 8 routes ...
+    k_paths: {k_paths}             # up to {k_paths} routes ...
     diverse_paths: true    # ... that really differ (see diverse_paths in the workshop package)
     temp: 5
     alpha: 1
@@ -264,12 +316,7 @@ demand:
 od_flows:
   "0_{DESTINATION}": 1
 """
-    (OUT / "sim_params.yaml").write_text(yaml)
-    walk = nx.shortest_path_length(U, place_node[1], place_node[DESTINATION], weight="length")
-    print(f"{N} nodes, {len(widths)} corridors; shortest walk Stationsplein -> Museumplein {walk:.0f} m")
-
-    if "--refresh-map" in sys.argv or not (OUT / "background.jpg").exists():
-        make_background([ll[0] for ll in latlon.values()], [ll[1] for ll in latlon.values()])
+    (out / "sim_params.yaml").write_text(yaml)
 
 
 def make_background(lats, lons, margin=0.0015, aspect=1.8, zoom=16, fade=0.45):

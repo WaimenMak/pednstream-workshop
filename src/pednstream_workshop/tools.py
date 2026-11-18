@@ -52,6 +52,23 @@ def _load_names(network_dir) -> dict:
     return out
 
 
+def _other_streets(network_dir) -> list:
+    """Streets that are drawn on the map but not simulated (other_streets.json), as
+    [[x1, y1], [x2, y2]] segments. The Amsterdam network only simulates the streets on its
+    routes; the rest of the street map is still shown."""
+    path = Path(network_dir) / "other_streets.json"
+    if not path.exists():
+        return []
+    with open(path) as f:
+        return json.load(f)
+
+
+def _map_points(pos: dict, other: list) -> tuple:
+    """x and y of every node and of every drawn-only street: the area a map has to show."""
+    pts = list(pos.values()) + [xy for seg in other for xy in seg]
+    return [p[0] for p in pts], [p[1] for p in pts]
+
+
 NODE_NAMES = _load_names(DEFAULT_NETWORK)["names"]
 
 CORRIDORS = ["0_2", "1_3", "2_3", "2_4", "3_4", "3_5", "4_6"]
@@ -327,7 +344,8 @@ def show_routes(network_dir: Path | str = AMSTERDAM, ax=None):
         pos = {int(k): v for k, v in json.load(f).items()}
     if ax is None:
         _, ax = plt.subplots(figsize=(11, 8))
-    segs = [[pos[int(a)], pos[int(b)]] for a, b in (k.split("_") for k in names["streets"])]
+    other = _other_streets(network_dir)
+    segs = [[pos[int(a)], pos[int(b)]] for a, b in (k.split("_") for k in names["streets"])] + other
     ax.add_collection(LineCollection(segs, colors="#9e9e9e", linewidths=0.6, alpha=0.7, zorder=1))
     colours = plt.get_cmap("tab10").colors
     for i, (number, row) in enumerate(table.iterrows()):
@@ -342,7 +360,7 @@ def show_routes(network_dir: Path | str = AMSTERDAM, ax=None):
         ax.annotate(f'{n} {names["names"].get(n, "").split(" (")[0]}', (x, y), xytext=(7, 5),
                     textcoords="offset points", fontsize=8, zorder=4,
                     bbox=dict(boxstyle="round,pad=0.15", fc="white", alpha=0.75, lw=0))
-    xs, ys = [p[0] for p in pos.values()], [p[1] for p in pos.values()]
+    xs, ys = _map_points(pos, other)
     pad = 0.06 * max(max(xs) - min(xs), max(ys) - min(ys))
     bg = Path(network_dir) / "background.jpg"
     if bg.exists():
@@ -528,6 +546,13 @@ class Result:
         return self._pos
 
     @property
+    def other_streets(self) -> list:
+        """Streets drawn on the map but not simulated (always empty), as coordinate pairs."""
+        if not hasattr(self, "_other_streets"):
+            self._other_streets = _other_streets(self.network_dir)
+        return self._other_streets
+
+    @property
     def background(self):
         """(image, extent, attribution) of the street map behind the network, or None."""
         if not hasattr(self, "_background"):
@@ -547,8 +572,9 @@ class Result:
             step = int(total.argmax())
         if ax is None:
             _, ax = plt.subplots(figsize=(6, 6))
-        street_map = len(self.corridors) > 100   # a whole street network: thin lines, empty streets grey
-        segs, cols, widths, empty = [], [], [], []
+        # a whole street network: thin lines, empty streets grey
+        street_map = bool(self.other_streets) or len(self.corridors) > 100
+        segs, cols, widths, empty = [], [], [], list(self.other_streets)
         for c in self.corridors:
             u, v = _parse_key(c)
             d = self.density(c)[step]
@@ -597,7 +623,7 @@ class Result:
             img, extent, attribution = bg
             ax.imshow(img, extent=extent, zorder=0, interpolation="bilinear")
             # frame the network; a wide panel shows more of the street map left and right
-            xs, ys = [p[0] for p in self.pos.values()], [p[1] for p in self.pos.values()]
+            xs, ys = _map_points(self.pos, self.other_streets)
             pad = 0.06 * max(max(xs) - min(xs), max(ys) - min(ys))
             ax.set_xlim(max(extent[0], min(xs) - pad), min(extent[1], max(xs) + pad))
             ax.set_ylim(max(extent[2], min(ys) - pad), min(extent[3], max(ys) + pad))
@@ -611,7 +637,7 @@ class Result:
         if street_map:
             # name the busiest streets, in the colours of the density chart: a column of labels along
             # the right edge, each with a line to the street, so they never cover each other
-            ys = [p[1] for p in self.pos.values()]
+            ys = _map_points(self.pos, self.other_streets)[1]
             gap = 0.06 * (max(ys) - min(ys))
             labels = []
             for street, c, colour in self.busiest_streets():

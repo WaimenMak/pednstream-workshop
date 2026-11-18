@@ -35,7 +35,9 @@ MAP = '''```
 AMS_MAP = """
 **The network is the real street map.** Every walkable street, square and footpath within about 650 m of
 the line from Centraal Station to Museumplein comes straight from **OpenStreetMap**: about 350 junctions
-and 650 street segments, with their real lengths. The numbered dots are the main places:
+and 650 street segments, with their real lengths. People walk one of **5 routes** (see Step 2), so only the
+about 120 street segments on those routes are simulated; that keeps each run short. The numbered dots are
+the main places:
 
 | node | place | | node | place |
 |---|---|---|---|---|
@@ -465,7 +467,7 @@ All 5 start at Stationsplein, so stewards there can send people away from a rout
 * Post your best score on the leaderboard.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, AMSTERDAM, arrival_plan, route_plan, show_routes", min_version="1.7.0"),
+    *setup("from pednstream_workshop import run, AMSTERDAM, arrival_plan, route_plan, show_routes", min_version="1.8.0"),
     md("""
 ## ▶ Step 2: load the Amsterdam tools and look at the 5 routes
 Routes that share a street run side by side on this map. The route numbers are the ones you open and close below.
@@ -547,7 +549,7 @@ everyone picks the route past the wide Damrak. What happens further on if fewer 
 ### For coders (optional): let the computer search
 A simple search in two steps. First try a few constant arrival rates, each with all routes open and with
 one route closed for the whole hour. Then take the best and move each block up or down by 60, keeping any
-change that improves the score. Each run takes about 10 s on the full street map, so this takes **≈5 minutes**.
+change that improves the score. Each run takes about 4 s, so this takes **≈2 minutes**.
 Can you beat it by hand, for example by closing routes only in some blocks? Can you write a better search?
 """),
     code('''def amsterdam_score(plan, open_routes=None):
