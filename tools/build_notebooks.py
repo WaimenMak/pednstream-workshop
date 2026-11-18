@@ -180,7 +180,12 @@ plot_speed_density(width=corridor_width_m); plt.show()'''),
   with the width. A wider corridor passes more people per minute; a longer one does not.
 * Density counts **both directions**: people walking towards you take up room too.
 
-> **Try:** what is the capacity of a 1 m corridor? Of a 3 m one? Keep these numbers in mind for the next step.
+> **Try:** set the width to 1 m, then 3 m. How many people per minute can each one pass?
+
+<details><summary>💡 Our answer</summary>
+1 m: about <b>130</b> people per minute. 3 m: about <b>400</b>. Three times as wide passes three times as many
+people. (Capacity = 2 people per m² × 1.1 m/s × width × 60 s.)
+</details>
 
 ---
 ## 2 · First run: one corridor with a bottleneck
@@ -216,13 +221,22 @@ display(one.kpis().to_frame("value"))'''),
 * **In and out** (bottom right): blue is people entering (your arrival pattern), red is people reaching a
   destination, the dashed line is how many people are inside.
 
-**Discuss with your partner**
-1. At 1.5 m: which corridor gets crowded **first**, and which one **next**? Where does the queue grow?
-2. While there is a queue, the red line is flat at about 150 people per minute. The walking rule said a
-   1.5 m corridor can pass about 200. Why fewer? *(Hint: what is the density inside the bottleneck,
-   corridor 3_4? Find that density on the right-hand side of the flow curve.)*
-3. Find the narrowest bottleneck that gives **no** queue at 200 people per minute. Then try 0.5 m: what
-   happens at the entrance?
+**Discuss with your partner** (bottleneck 1.5 m, 200 people per minute)
+1. Which corridor gets crowded **first**? Which one **next**?
+2. About how many people per minute reach the exit while there is a queue? More or fewer than the 200 who arrive?
+3. Make the bottleneck **2 m**, then **0.5 m**. What changes?
+
+<details><summary>💡 Our answers</summary>
+<b>1.</b> First the bottleneck itself, 3_4 (minute 3), then the corridor just before it, 2_3 (minute 5), then
+1_2 (minute 14). The queue grows <b>backwards</b>, towards the entrance. The corridor after the bottleneck,
+4_5, stays quiet.<br><br>
+<b>2.</b> About <b>150</b> per minute, fewer than the 200 who arrive, so the queue keeps growing until the arrivals
+stop at minute 20. It is even fewer than the ≈200 a 1.5 m corridor can pass at best: the bottleneck is packed
+(about 3 people per m²), and a packed corridor moves slowly. That is the right-hand side of the flow curve.<br><br>
+<b>3.</b> 2 m: no queue. A 2 m corridor passes up to ≈260 people per minute, more than the 200 who arrive.
+0.5 m: the queue reaches the entrance after about 10 minutes, and about 1,100 of the 4,000 people are
+turned away.
+</details>
 """),
     form('''#@title 🎬 Animate the corridor (optional, ≈15 s) {display-mode: "form"}
 display(one.animate(every=3))'''),
@@ -255,10 +269,16 @@ share = to_x / max(to_x + to_y, 1e-9)
 print(f"Gate A sent {share:.0%} to Platform X ({to_x:.0f} people) "
       f"and {1 - share:.0%} to City Exit Y ({to_y:.0f} people)")'''),
     md("""
-> **Try:** 1 & 1, then 10 & 10. Same or different? Then 1 & 0.
+> **Try:** 1 & 1, then 10 & 10, then 1 & 0. What share goes to the Platform each time?
 >
 > Every person who enters gets a destination drawn from the weights and keeps it all the way.
 > **The weights decide where people go; the simulation decides which route they take and when they arrive.**
+
+<details><summary>💡 Our answer</summary>
+1 & 1: <b>50%</b>. 10 & 10: also <b>50%</b>, because only the ratio counts, not the size. 1 & 0: <b>100%</b>, nobody
+goes to the City Exit. (3 & 1 gives 75%.) The number of people entering is the same every time: the weights
+only split them.
+</details>
 
 ---
 ## 5 · Same totals, different mix ⭐
@@ -287,11 +307,18 @@ display(compare(runs))'''),
 * **turned away**: people who could not even enter because the first corridor was full.
 
 **Discuss with your partner**
-1. *reached Platform X* is about the same in all three, so why does one scenario cost so much more time?
-   *(Hint: compare corridor 2_3 on the crossing and parallel maps. In the crossing scenario Gate A's
-   walkers cross it eastwards to the Platform. Which way do Gate B's walkers to the City Exit go? And
-   what did the walking rule say about people walking towards you?)*
-2. Knowing only "50% go to the Platform", could you have predicted this?
+1. Which scenario takes the most time (person-hours)?
+2. Look at corridor 2_3 (Plaza–Hall) on the three maps. Why is it busy in one scenario and almost empty in another?
+
+<details><summary>💡 Our answers</summary>
+<b>1.</b> <b>Crossing</b>: about 650 person-hours, against about 435 for baseline and 340 for parallel. The same number
+of people reach each destination in all three.<br><br>
+<b>2.</b> In crossing, Gate A's walkers go east to the Platform and part of Gate B's walkers go west to the City
+Exit, so they meet <b>head-on</b> in the narrow 2 m corridor 2_3 (up to 3.5 people per m²). People walking
+towards you count towards the density too, so everyone slows down. In parallel, Gate A heads north and Gate B
+heads east: nobody needs 2_3 (0.1 per m²) and the two streams never meet.<br>
+So "50% go to the Platform" is not enough to predict the crowding: you need to know <i>who</i> goes where.
+</details>
 
 ---
 ## 6 · Same model, a real city
@@ -306,9 +333,15 @@ ams = run(network_dir=AMSTERDAM, arrivals={0: arrival_plan([people_per_minute_fr
 ams.dashboard("Centraal Station → Museumplein", flow=True); plt.show()
 display(ams.kpis().to_frame("value"))'''),
     md("""
-> **Try:** 300, then 600 people per minute. How long is the walk on empty streets (the gap between
-> the blue and the red)? At 600, when does the red line stop following the blue? You'll plan this event
-> yourself in **Part 3**.
+> **Try:** 300 people per minute, then 600. Does the red line (arriving at Museumplein) get as high as the
+> blue (leaving the station)?
+
+<details><summary>💡 Our answer</summary>
+300: yes. The first people arrive after about <b>44 minutes</b> (the walk on empty streets), and from then on 300
+per minute arrive, as many as leave. 600: no. Arrivals level off at about <b>400</b> per minute: the streets near
+Muntplein (Oude Turfmarkt) jam, and when the 2 hours are over about 8,000 people are still on their way.
+You'll plan this event yourself in <b>Part 3</b>.
+</details>
 
 ---
 ## 7 · Build your own network ⭐
@@ -367,19 +400,30 @@ print("Which routes people chose (share per OD pair, at the junction where the r
 display(mine.route_split())'''),
     md("""
 **Ideas to try**
-* **Same people, different timing.** Arrivals `{0: [480, 0, 0, 0]}` and `{0: [120, 120, 120, 120]}` bring
-  the same number of people. Which has fewer person-hours? Now look at *turned away*: is fewer
-  person-hours always better?
-* **Push people around.** Make the Gallery corridor `"1-3"` narrow (`widths = {"1-2": 2, "1-3": 1}`).
-  How does the route split change? Does the crowd simply move somewhere else?
-* **A second entrance.** Add a Side Gate north of the Gallery:
-  * `positions`: add `7: (60, 130)`, and `names`: add `7: "Side Gate"`
-  * `corridors`: add `"3-7"`, `origins = [0, 7]`
-  * `od_weights`: add `"7_5": 1, "7_6": 1`, and `arrivals_per_minute`: add `7: [120, 240, 120, 0]`
+1. **Same people, different timing.** Try arrivals `{0: [480, 0, 0, 0]}`, then `{0: [120, 120, 120, 120]}`.
+   Both bring 2,400 people. Which one is better?
+2. **Make a route narrow.** Set `widths = {"1-2": 2, "1-3": 1}`. Which route do people take now?
+3. **A second entrance.** Add a Side Gate north of the Gallery:
+   * `positions`: add `7: (60, 130)`, and `names`: add `7: "Side Gate"`
+   * `corridors`: add `"3-7"`, and set `origins = [0, 7]`
+   * `arrivals_per_minute`: add `7: [120, 240, 120, 0]`
 
-  Now choose the OD weights so the two streams **cross head-on**, as in section 5.
-* **Your own place.** Sketch a station, a stadium or your campus on paper, number the junctions,
-  measure rough positions in metres, and type it in. Start with one origin and one destination.
+   Then compare `od_weights = {"0_6": 1, "7_5": 1}` with `{"0_5": 1, "7_6": 1}`. Which one is worse, and why?
+4. **Your own place.** Sketch a station, a stadium or your campus on paper, number the junctions,
+   guess their positions in metres, and type it in. Start with one origin and one destination.
+
+<details><summary>💡 Our answers</summary>
+<b>1.</b> The burst <code>[480, 0, 0, 0]</code> <i>looks</i> better (131 person-hours against 161), but look at
+<i>turned away</i>: about 700 of the 2,400 people could not even get in, so their time is not counted. Spread out,
+nobody is turned away. Always check <i>turned away</i> next to the time.<br><br>
+<b>2.</b> Almost everyone switches to the Hall–Square corridor 1_2: from 66% to 97% of the people going to Exit East,
+and from 27% to 84% of those going to Exit North. Corridor 1_2 climbs from 1.0 to almost 2 people per m², right at
+the edge of slowing down. So the crowd moves to the other route; with more people, 1_2 would jam.<br><br>
+<b>3.</b> <code>{"0_6": 1, "7_5": 1}</code> is worse: about 330 person-hours against 280. Entrance → Exit North walks
+north and east, Side Gate → Exit East walks east and south, so the two streams meet <b>head-on</b> in corridors
+1_3 and 2_4 and share 3_4. With <code>{"0_5": 1, "7_6": 1}</code> they hardly meet. Same idea as section 5: who goes
+where decides where it gets crowded.
+</details>
 """),
     form('''#@title 🎬 Animate your network (optional, ≈15 s) {display-mode: "form"}
 display(mine.animate(every=3))'''),
