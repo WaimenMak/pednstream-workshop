@@ -313,18 +313,6 @@ def run(
 # ----------------------------------------------------------------------------
 # Results
 # ----------------------------------------------------------------------------
-def _main_streets(net, names: dict, path, k: int = 3) -> list:
-    """The k longest named streets along a route, in walking order."""
-    streets = names["streets"]
-    places = {name.split(" (")[0] for name in names["names"].values()}   # squares are not "via" streets
-    along = {}
-    for u, v in zip(path, path[1:]):
-        street = streets.get(f"{min(u, v)}_{max(u, v)}", "")
-        if street and street not in ("station hall", "footpath") and street not in places:
-            along[street] = along.get(street, 0) + net.links[(u, v)].length
-    return sorted(sorted(along, key=lambda s: -along[s])[:k], key=list(along).index)
-
-
 def routes(network_dir: Path | str = AMSTERDAM) -> pd.DataFrame:
     """The routes people can take from the origin to the destination, numbered as in `open_routes`.
 
@@ -336,10 +324,17 @@ def routes(network_dir: Path | str = AMSTERDAM) -> pd.DataFrame:
     with _route_set(params):
         net = gen.create_network(str(network_dir), verbose=False)
     names = _load_names(network_dir)
+    streets = names["streets"]
+    places = {name.split(" (")[0] for name in names["names"].values()}   # squares are not "via" streets
     rows = []
     for (o, d), paths in net.path_finder.od_paths.items():
         for i, path in enumerate(paths, start=1):
-            main = _main_streets(net, names, path)
+            along = {}
+            for u, v in zip(path, path[1:]):
+                street = streets.get(f"{min(u, v)}_{max(u, v)}", "")
+                if street and street not in ("station hall", "footpath") and street not in places:
+                    along[street] = along.get(street, 0) + net.links[(u, v)].length
+            main = sorted(sorted(along, key=lambda s: -along[s])[:3], key=list(along).index)
             rows.append({"route": i, "OD": f"{o}_{d}", "via": " → ".join(main),
                          "length (m)": round(sum(net.links[(u, v)].length for u, v in zip(path, path[1:]))),
                          "nodes": path})
@@ -434,27 +429,6 @@ class Result:
                         on.setdefault(f"{min(a, b)}_{max(a, b)}", set()).add(r)
             self._route_numbers = {c: sorted(rs) for c, rs in on.items()}
         return self._route_numbers.get(corridor, [])
-
-    def route_densities(self) -> list:
-        """Average density on each route over time, as [(label, density per step, colour)].
-
-        Area-weighted: the people on all of a route's streets divided by their total area (both
-        directions, as on the map), so a street that several routes share counts for each of them.
-        The station hall, which every route starts in, is left out. Colours as in `show_routes`.
-        Empty unless the network has a single OD pair, where route numbers are unambiguous."""
-        if not hasattr(self, "_route_densities"):
-            paths = list(self.network.path_finder.od_paths.values())
-            self._route_densities = []
-            if len(paths) == 1 and self.names["streets"]:
-                for r, path in enumerate(paths[0], start=1):
-                    corridors = {f"{min(a, b)}_{max(a, b)}" for a, b in zip(path, path[1:])}
-                    corridors = [c for c in sorted(corridors) if self.names["streets"].get(c) != "station hall"]
-                    people = sum(self.people_on(c) for c in corridors)
-                    area = sum(self.link(c).length * self.link(c).width for c in corridors)
-                    main = _main_streets(self.network, self.names, path)   # as in routes(): first = where it starts
-                    label = f"route {r} · {main[0]}" if main else f"route {r}"
-                    self._route_densities.append((label, people / area, ROUTE_COLOURS[(r - 1) % 10]))
-        return self._route_densities
 
     def busiest_streets(self, n: int = 5) -> list:
         """The n streets with the highest peak density, as [(label, its most crowded corridor, colour, line style)].
@@ -723,36 +697,24 @@ class Result:
         if ax is None:
             _, ax = plt.subplots(figsize=(9, 4))
         minutes = self.t * self.unit_time / 60
-        by_route = False
         if corridors is None and self.names["streets"] and len(self.corridors) > 20:
-            # big network: one line per route (average density, in the route's colour), or, without
-            # numbered routes, the busiest streets (each labelled on the map in the same colour)
-            by_route = bool(self.route_densities())
-            for label, density, colour in self.route_densities():
-                ax.plot(minutes, density, color=colour, lw=2, label=label)
-            if not by_route:
-                for street, c, colour, style in self.busiest_streets():
-                    ax.plot(minutes, self.density(c), color=colour, ls=style, lw=2, label=street)
+            # big network: the busiest streets only, each as the density on its most crowded
+            # stretch (the one labelled on the map, in the same colour)
+            for street, c, colour, style in self.busiest_streets():
+                ax.plot(minutes, self.density(c), color=colour, ls=style, lw=2, label=street)
             corridors = []
         elif corridors is None:
             corridors = self.corridors
         for c in corridors:
             ax.plot(minutes, self.density(c), label=self.corridor_label(c))
-        if by_route:
-            # averages over whole routes stay far below the critical density, so no dashed line here;
-            # leave room above the lines for the legend
-            top = max(d.max() for _, d, _ in self.route_densities())
-            ax.set_ylim(0, 1.45 * top if top > 0 else 1)
-            ax.legend(ncol=3, fontsize=8, loc="upper left")
-        else:
-            ax.axhline(self.k_critical, ls="--", c="grey", lw=1)
-            ax.legend(ncol=4, fontsize=8)
+        ax.axhline(self.k_critical, ls="--", c="grey", lw=1)
         ax.set_xlabel("minute")
-        ax.set_ylabel("average density (ped/m²)" if by_route else "density (ped/m²)")
+        ax.set_ylabel("density (ped/m²)")
+        ax.legend(ncol=4, fontsize=8)
         if corridors:
             default_title = "Density per corridor"
-        elif by_route:
-            default_title = "Average density on each route (colours as on the route map)"
+        elif any(self.route_numbers(c) for _, c, _, _ in self.busiest_streets()):
+            default_title = "Most crowded streets, in their route's colour (grey = shared)"
         else:
             default_title = "Density on the most crowded streets (labelled on the map)"
         ax.set_title(title or default_title)
