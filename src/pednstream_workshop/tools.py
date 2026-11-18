@@ -202,6 +202,150 @@ def _route_gates(net, open_routes, block_steps: int, steps: int) -> list:
     return gates
 
 
+def _pair(key) -> tuple:
+    """'1-2', '1_2', '1 2' or (1, 2) -> (1, 2)."""
+    if isinstance(key, (tuple, list)):
+        return int(key[0]), int(key[1])
+    a, b = str(key).replace("-", " ").replace("_", " ").split()
+    return int(a), int(b)
+
+
+def make_network(
+    corridors,
+    positions: Dict,
+    origins: Iterable[int],
+    destinations: Iterable[int],
+    widths: Optional[Dict] = None,
+    names: Optional[Dict] = None,
+    folder: Path | str = "my_network",
+    minutes: float = 50,
+    unit_time: float = 10,
+    width: float = 3,
+    free_flow_speed: float = 1.1,
+    k_paths: int = 2,
+) -> Path:
+    """Write your own PedNStream network to a folder and return the folder, for run(network_dir=...).
+
+    Args:
+        corridors: two-way corridors as node pairs, e.g. ["0-1", "1-2", "1-3"] or [(0, 1), (1, 2)].
+        positions: x, y of every node in metres, e.g. {0: (0, 0), 1: (60, 0)}. Nodes must be
+            numbered 0, 1, 2, ... without gaps. A corridor's length is the distance between its ends.
+        origins / destinations: the nodes where people enter / want to go.
+        widths: corridors that are not `width` m wide, e.g. {"1-2": 1.5}.
+        names: display names for nodes, e.g. {0: "Entrance", 3: "Exit"}.
+        minutes: how long to simulate. unit_time: seconds per simulation step.
+        k_paths: how many of the shortest routes people can choose from for each OD pair.
+
+    Every origin -> destination pair gets OD weight 1 and a single-peak rush of arrivals; change them
+    per run with run(od=..., arrivals=...). The folder holds a normal PedNStream sim_params.yaml
+    that you can open and edit (see Part 4).
+    """
+    import yaml
+
+    pos = {int(n): (float(xy[0]), float(xy[1])) for n, xy in positions.items()}
+    n = len(pos)
+    if sorted(pos) != list(range(n)):
+        raise ValueError(f"Number the nodes 0, 1, 2, ... without gaps; you have {sorted(pos)}")
+    if isinstance(corridors, str):
+        corridors = corridors.replace(",", " ").split()
+    pairs = [_pair(c) for c in corridors]
+    origins, destinations = [int(o) for o in origins], [int(d) for d in destinations]
+    for u, v in pairs:
+        if u not in pos or v not in pos:
+            raise ValueError(f"Corridor {u}-{v}: node {u if u not in pos else v} has no position")
+        if u == v:
+            raise ValueError(f"Corridor {u}-{v} connects a node to itself")
+    for node in origins + destinations:
+        if node not in pos:
+            raise ValueError(f"Node {node} is an origin or destination but has no position")
+    if set(origins) & set(destinations):
+        raise ValueError(f"A node can't be both an origin and a destination: {set(origins) & set(destinations)}")
+
+    import networkx as nx
+
+    graph = nx.Graph(pairs)
+    graph.add_nodes_from(pos)
+    for o in origins:
+        for d in destinations:
+            if not nx.has_path(graph, o, d):
+                raise ValueError(f"There is no way to walk from node {o} to node {d}: add a corridor")
+
+    adj = np.zeros((n, n), dtype=int)
+    links = {}
+    width_of = {tuple(sorted(_pair(k))): float(w) for k, w in (widths or {}).items()}
+    for key in width_of:
+        if key not in {tuple(sorted(p)) for p in pairs}:
+            raise ValueError(f"widths: there is no corridor {key[0]}-{key[1]}")
+    for u, v in pairs:
+        adj[u, v] = adj[v, u] = 1
+        a, b = sorted((u, v))
+        length = max(5.0, float(np.hypot(pos[u][0] - pos[v][0], pos[u][1] - pos[v][1])))
+        links[f"{a}_{b}"] = {"length": round(length, 1), "width": width_of.get((a, b), float(width))}
+
+    steps = int(round(minutes * 60 / unit_time))
+    config = {
+        "network": {"adjacency_matrix": adj.tolist(), "origin_nodes": origins, "destination_nodes": destinations},
+        "simulation": {
+            "seed": 42, "simulation_steps": steps, "unit_time": unit_time,
+            "assign_flows_type": "classic", "od_tracking": True,
+            "path_finder": {"k_paths": k_paths, "temp": 5, "alpha": 1, "beta": 2, "omega": 1, "std_dev": 0},
+        },
+        "default_link": {"length": 50, "width": float(width), "free_flow_speed": free_flow_speed,
+                         "k_critical": 2, "k_jam": 6, "gamma": 0.01},
+        "links": links,
+        "demand": {f"origin_{o}": {"pattern": "single_peak", "base_lambda": 5, "peak_lambda": 30,
+                                   "peak_position": 0.3} for o in origins},
+        "od_flows": {f"{o}_{d}": 1 for o in origins for d in destinations},
+    }
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    with open(folder / "sim_params.yaml", "w") as f:
+        f.write("# Written by pednstream_workshop.make_network: a normal PedNStream network file.\n")
+        yaml.safe_dump(config, f, sort_keys=False, default_flow_style=None)
+    with open(folder / "node_positions.json", "w") as f:
+        json.dump({str(k): list(v) for k, v in pos.items()}, f)
+    with open(folder / "names.json", "w") as f:
+        json.dump({"names": {str(k): v for k, v in (names or {}).items()}}, f, indent=1)
+    return folder
+
+
+def plot_speed_density(network_dir: Path | str = DEFAULT_NETWORK, width: float = 1):
+    """PedNStream's walking rule (the fundamental diagram) for a network's corridors:
+    walking speed and flow through a corridor of `width` m against the density."""
+    import yaml
+
+    with open(Path(network_dir) / "sim_params.yaml") as f:
+        p = yaml.safe_load(f)["default_link"]
+    v_f, k_c, k_j = p["free_flow_speed"], p["k_critical"], p["k_jam"]
+    from pednstream.utils.functions import BiDirectionalFd
+
+    fd = BiDirectionalFd(v_f=v_f, k_critical=k_c, k_jam=k_j)
+    k = np.linspace(0, k_j, 300)
+    v = np.array([fd(x, 0) for x in k])
+    q = k * v * width * 60   # people per minute through the corridor
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 3.6))
+    a1.plot(k, v, lw=2.5, c="tab:blue")
+    a1.set_ylabel("walking speed (m/s)")
+    a2.plot(k, q, lw=2.5, c="tab:red")
+    a2.set_ylabel(f"people per minute through {width:g} m of width")
+    for ax in (a1, a2):
+        ax.axvspan(k_c, k_j, color="tab:orange", alpha=0.12)
+        ax.axvline(k_c, ls="--", c="grey", lw=1)
+        ax.set_xlabel("density (people per m², both directions together)")
+        ax.set_xlim(0, k_j)
+        ax.set_ylim(bottom=0)
+    a1.text(k_c / 2, v_f * 0.5, "free walking:\neveryone at\nfull speed", ha="center", fontsize=9)
+    a1.text((k_c + k_j) / 2, v_f * 0.75, "crowded:\nslower and slower", ha="center", fontsize=9)
+    a2.annotate(f"capacity ≈ {k_c * v_f * width * 60:.0f} people/min", (k_c, k_c * v_f * width * 60),
+                xytext=(k_c + 0.6, k_c * v_f * width * 60 * 0.9), fontsize=9,
+                arrowprops=dict(arrowstyle="->", color="grey"))
+    a2.text(k_j * 0.97, k_c * v_f * width * 6, "jam: nobody\nmoves", ha="right", fontsize=9)
+    a1.set_title("Speed drops when it gets crowded")
+    a2.set_title("So a corridor can only pass so many people")
+    fig.tight_layout()
+    return fig
+
+
 def widen(street: str, extra: float = 2, network_dir: Path | str = AMSTERDAM) -> Dict[str, Dict]:
     """Link overrides that widen every stretch of a named street, for run(links=...).
 
@@ -300,6 +444,9 @@ def run(
             custom_demand_functions=custom,
             verbose=False,
         )
+    unknown = sorted(set(int(o) for o in (arrivals or {})) - set(net.origin_nodes))
+    if unknown:
+        raise ValueError(f"arrivals: node(s) {unknown} are not origins (origins: {list(net.origin_nodes)})")
     gates = [] if open_routes is None else _route_gates(net, open_routes, int(round(600 / params["unit_time"])), steps)
     for t in range(1, steps):
         for link, width in gates:      # open or close the first street of each route
@@ -522,7 +669,7 @@ class Result:
                 "worst corridor": self.corridor_label(worst),
                 "peak density there (ped/m²)": round(dens[worst], 2),
                 "corridor-minutes congested": round(congested_minutes, 1),
-                "time spent inside (person-hours)": round(in_net.sum() * self.unit_time / 3600, 1),
+                "time spent inside (person-hours)": round(float(in_net.sum()) * self.unit_time / 3600, 1),
             }
         )
 
@@ -636,6 +783,8 @@ class Result:
             marker = "s" if n in self.network.origin_nodes else "D" if n in self.network.destination_nodes else "o"
             ax.scatter([x], [y], s=260, c=colour, marker=marker, zorder=3, edgecolor="white")
             ax.text(x, y, str(n), color="white", fontsize=8, fontweight="bold", ha="center", va="center", zorder=4)
+            if n not in self.names["names"]:
+                continue   # no name: the number in the dot is enough
             label = self.name(n) if Path(self.network_dir) == DEFAULT_NETWORK else self.name(n).split(" (")[0]
             side = self.names["label_side"].get(n, "right")
             offset, ha, va = {"right": ((10, 8), "left", "bottom"), "left": ((-10, 8), "right", "bottom"),
@@ -663,7 +812,14 @@ class Result:
                     color="#555555", zorder=5)   # bottom left: the street labels sit on the right
             ax.set_xticks([]); ax.set_yticks([])
         else:
-            ax.margins(0.25)
+            # a 25% margin around the network, and never flatter than a third of its size, so a
+            # straight corridor doesn't collapse to a line
+            xs, ys = zip(*self.pos.values())
+            xr, yr = max(xs) - min(xs), max(ys) - min(ys)
+            span = max(xr, yr, 1)
+            cx, cy = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
+            ax.set_xlim(cx - max(0.75 * xr, span / 3), cx + max(0.75 * xr, span / 3))
+            ax.set_ylim(cy - max(0.75 * yr, span / 3), cy + max(0.75 * yr, span / 3))
             ax.axis("off")
         if street_map:
             # name the busiest streets, in the colours of the density chart: a column of labels along
@@ -741,13 +897,17 @@ class Result:
 
         departures = sum(self.entered(o) for o in self.network.origin_nodes)
         arrivals = sum(self.arrivals(d) for d in self.network.destination_nodes)
-        ax.fill_between(minutes, rate(departures), step="pre", alpha=0.35, color="tab:blue", label="leaving the station (your plan)")
-        ax.plot(minutes, rate(arrivals), color="tab:red", lw=2, label="arriving at the destination")
+        amsterdam = Path(self.network_dir) == AMSTERDAM
+        ax.fill_between(minutes, rate(departures), step="pre", alpha=0.35, color="tab:blue",
+                        label="leaving the station (your plan)" if amsterdam else "entering at the origins")
+        ax.plot(minutes, rate(arrivals), color="tab:red", lw=2,
+                label="arriving at the destination" if amsterdam else "arriving at the destinations")
         ax.set_xlabel("minute")
         ax.set_ylabel("people per minute")
         ax2 = ax.twinx()
-        ax2.plot(minutes, departures - arrivals, color="black", ls="--", lw=1, label="people on the streets")
-        ax2.set_ylabel("people on the streets")
+        inside = "people on the streets" if amsterdam else "people inside"
+        ax2.plot(minutes, departures - arrivals, color="black", ls="--", lw=1, label=inside)
+        ax2.set_ylabel(inside)
         ax2.set_ylim(bottom=0)
         h1, l1 = ax.get_legend_handles_labels()
         h2, l2 = ax2.get_legend_handles_labels()

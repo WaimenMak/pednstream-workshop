@@ -129,17 +129,106 @@ def write(name, cells):
 # =============================================================================
 write("01_od_weights_guided.ipynb", [
     md(f"""
-# Part 1 · Where do people want to go?
-### A quick first run: OD weights and where crowds form
+# Part 1 · How PedNStream works
+### From one corridor to a city: walking, OD weights, and a network of your own
 
-In about 15 minutes you run a small station a few times and see one big idea:
-**who goes where** matters as much as **how many** people there are.
+In about 40 minutes you will
+1. see the **one rule** PedNStream uses for walking,
+2. watch a **queue** grow in a single corridor,
+3. find out why **who goes where** (the OD weights) matters as much as **how many** people there are,
+4. run the same model on **real Amsterdam streets**,
+5. **build your own network**, with your own OD weights and arrival pattern.
+
 Work in pairs: one person clicks, the other takes notes.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps", min_version="1.7.0"),
+    *setup("from pednstream_workshop import (run, compare, compare_maps, make_network, arrival_plan,\n"
+           "                                 plot_speed_density, AMSTERDAM)", min_version="1.12.0"),
+    md("""
+## 1 · PedNStream in one minute
+PedNStream does not move individual dots around. It keeps track of **how many people** are on each
+corridor and updates that every **time step** (here 10 seconds). That makes it fast: a whole city
+centre runs in seconds.
+
+**The network** is a set of **nodes** (gates, junctions, destinations) joined by **corridors** (links).
+Every corridor has a length and a width, and people can walk it both ways.
+
+**Every 10 seconds, four things happen:**
+
+| | what happens | decided by | you set it with |
+|---|---|---|---|
+| 1 | people **arrive** at the origins (gates) | the **arrival pattern**: people per minute | `arrivals=` |
+| 2 | each new person gets a **destination** and keeps it | the **OD weights** | `od=` |
+| 3 | at each junction people pick their **next corridor** | **route choice**: shorter, wider and emptier routes are more attractive | `route_choice=` |
+| 4 | people **walk** | how crowded the corridor is (below) | corridor `width` |
+
+When the next corridor is full, people cannot step into it: they wait, and the queue grows
+**backwards** into the corridors behind them (*spill-back*). If even the first corridor at a gate is full,
+new arrivals are **turned away**.
+
+PedNStream is built on the *Link Transmission Model* from traffic engineering, adapted to people walking
+in both directions. Press ▶ to see its walking rule.
+"""),
+    form('''#@title ▶ The walking rule {display-mode: "form"}
+corridor_width_m = 2  #@param {type:"slider", min:0.5, max:6, step:0.5}
+plot_speed_density(width=corridor_width_m); plt.show()'''),
+    md("""
+**How to read this**
+* Up to **2 people per m²** everyone walks at full speed (1.1 m/s). Above that people slow down, and at
+  **6 per m²** nobody moves.
+* Flow = density × speed. It is highest at 2 per m²: that is the corridor's **capacity**, and it grows
+  with the width. A wider corridor passes more people per minute; a longer one does not.
+* Density counts **both directions**: people walking towards you take up room too.
+
+> **Try:** what is the capacity of a 1 m corridor? Of a 3 m one? Keep these numbers in mind for the next step.
+
+---
+## 2 · First run: one corridor with a bottleneck
+```
+   0 ─────── 1 ─────── 2 ─────── 3 ═══════ 4 ─────── 5
+Entrance          40 m each, 3 m wide      ↑          Exit
+                                       bottleneck
+```
+For 20 minutes people arrive at the entrance, then nobody. Everyone walks to the exit. Press ▶, then change
+the bottleneck width and press ▶ again.
+"""),
+    form('''#@title ▶ Run the corridor {display-mode: "form"}
+bottleneck_width_m = 1.5  #@param {type:"slider", min:0.5, max:3, step:0.5}
+people_per_minute = 200  #@param {type:"slider", min:20, max:400, step:20}
+
+corridor = make_network(
+    corridors=["0-1", "1-2", "2-3", "3-4", "4-5"],
+    positions={0: (0, 0), 1: (40, 0), 2: (80, 0), 3: (120, 0), 4: (160, 0), 5: (200, 0)},  # metres
+    origins=[0], destinations=[5],
+    widths={"3-4": bottleneck_width_m},
+    names={0: "Entrance", 5: "Exit"},
+    folder="corridor", minutes=40)
+rush = arrival_plan([people_per_minute, people_per_minute], block_minutes=10)   # 2 x 10 minutes, then nobody
+one = run(network_dir=corridor, arrivals={0: rush})
+one.dashboard("One corridor with a bottleneck", flow=True); plt.show()
+display(one.kpis().to_frame("value"))'''),
+    md("""
+**How to read the dashboard** (you'll see it for every network)
+* **Map** (left): corridors coloured by density at the busiest moment: green is free walking, yellow and
+  red is crowded.
+* **Density per corridor** (top right): one line per corridor. The dashed line is the 2 per m² where
+  people start to slow down.
+* **In and out** (bottom right): blue is people entering (your arrival pattern), red is people reaching a
+  destination, the dashed line is how many people are inside.
+
+**Discuss with your partner**
+1. At 1.5 m: which corridor gets crowded **first**, and which one **next**? Where does the queue grow?
+2. While there is a queue, the red line is flat at about 150 people per minute. The walking rule said a
+   1.5 m corridor can pass about 200. Why fewer? *(Hint: what is the density inside the bottleneck,
+   corridor 3_4? Find that density on the right-hand side of the flow curve.)*
+3. Find the narrowest bottleneck that gives **no** queue at 200 people per minute. Then try 0.5 m: what
+   happens at the entrance?
+"""),
+    form('''#@title 🎬 Animate the corridor (optional, ≈15 s) {display-mode: "form"}
+display(one.animate(every=3))'''),
     md(f"""
-## 1 · Meet *Station Square*
+---
+## 3 · Who goes where? Meet *Station Square*
 {MAP}
 * **Two entrances**: West Gate **A** enters at the Plaza, South Gate **B** enters at the Hall.
 * **Two destinations**: the **Platform X** and the **City Exit Y**.
@@ -148,10 +237,10 @@ Work in pairs: one person clicks, the other takes notes.
 * Where there are two routes, people choose by **distance**, **crowding** and **width**.
 """),
     md("""
-## 2 · What is an OD weight?
+## 4 · What is an OD weight?
 An **OD weight** says how strongly the people entering at a gate (the *origin*) are drawn to each
 *destination*. Weights are **relative**: `3` and `1` mean "three times as many head to the Platform as
-to the City Exit". The gate's demand sets how *many* people enter; the weights only decide where they head.
+to the City Exit". The arrival pattern sets how *many* people enter; the weights only decide where they head.
 
 The cell below opens **only Gate A**. Press ▶, then move the sliders and press ▶ again.
 """),
@@ -172,7 +261,7 @@ print(f"Gate A sent {share:.0%} to Platform X ({to_x:.0f} people) "
 > **The weights decide where people go; the simulation decides which route they take and when they arrive.**
 
 ---
-## 3 · Same totals, different mix ⭐
+## 5 · Same totals, different mix ⭐
 Now both gates are open. Three ways to divide the travellers, and in all three **half of all travellers
 go to each destination**. Only *who* goes where differs:
 
@@ -193,22 +282,125 @@ compare_maps(runs); plt.show()
 display(compare(runs))'''),
     md("""
 **How to read this**
-* **Map**: corridor colour = the highest density (people per m²) during the run. Above **2** (yellow,
-  then orange and red) people slow down sharply.
+* **Map**: corridor colour = density at that scenario's busiest moment.
 * **time spent inside (person-hours)**: the main "how bad was it" number. **Lower is better.**
 * **turned away**: people who could not even enter because the first corridor was full.
 
 **Discuss with your partner**
 1. *reached Platform X* is about the same in all three, so why does one scenario cost so much more time?
    *(Hint: compare corridor 2_3 on the crossing and parallel maps. In the crossing scenario Gate A's
-   walkers cross it eastwards to the Platform. Which way do Gate B's walkers to the City Exit go?)*
+   walkers cross it eastwards to the Platform. Which way do Gate B's walkers to the City Exit go? And
+   what did the walking rule say about people walking towards you?)*
 2. Knowing only "50% go to the Platform", could you have predicted this?
 
 ---
+## 6 · Same model, a real city
+PedNStream does not care how big the network is. This is the network of Part 3: real streets from
+**OpenStreetMap** between Amsterdam **Centraal Station** and **Museumplein**, about 120 street segments.
+People leave the station at a steady rate for an hour and walk to Museumplein, choosing between 5 routes.
+The run takes about 5 seconds.
+"""),
+    form('''#@title ▶ Run Amsterdam {display-mode: "form"}
+people_per_minute_from_the_station = 300  #@param {type:"slider", min:60, max:900, step:60}
+ams = run(network_dir=AMSTERDAM, arrivals={0: arrival_plan([people_per_minute_from_the_station] * 6)})
+ams.dashboard("Centraal Station → Museumplein", flow=True); plt.show()
+display(ams.kpis().to_frame("value"))'''),
+    md("""
+> **Try:** 300, then 600 people per minute. How long is the walk on empty streets (the gap between
+> the blue and the red)? At 600, when does the red line stop following the blue? You'll plan this event
+> yourself in **Part 3**.
+
+---
+## 7 · Build your own network ⭐
+Now you are the modeller. A network needs just a few things:
+1. **Nodes**, numbered `0, 1, 2, …` with an **x, y position in metres**. A corridor's length is the
+   distance between its two nodes.
+2. **Corridors** between pairs of nodes, e.g. `"1-2"`. They are 3 m wide unless you say otherwise.
+3. **Origins** (where people enter) and **destinations** (where they want to go).
+4. **OD weights** per origin–destination pair, as in sections 4 and 5. Pairs you leave out get weight 0.
+5. An **arrival pattern** per origin: people per minute, one value per block of minutes.
+   `[120, 240, 120, 0]` with 5-minute blocks = 120/min for 5 minutes, 240/min for 5 minutes, and so on.
+
+The example is a small museum. People enter at the **Entrance** and leave by **Exit East** or **Exit
+North**; between them two routes run through the narrow Hall–Square corridor or past the Gallery:
+```
+                       6 Exit North
+                       |
+        3 ──────────── 4
+     Gallery           |  Garden
+        |              |
+ 0 ──── 1 ════════════ 2 ──── 5
+Entrance Hall   (2 m)  Square  Exit East
+```
+In Colab, type in the boxes on the right (keep the brackets and quotes). In Jupyter, edit the values in the code.
+"""),
+    form('''#@title 🛠️ **Your network**: edit the values, then press ▶ {display-mode: "form"}
+#@markdown ### 1 · Nodes: numbers 0, 1, 2, … with x, y in metres, and (optional) names
+positions = {0: (0, 0), 1: (60, 0), 2: (140, 0), 3: (60, 70), 4: (140, 70), 5: (200, 0), 6: (140, 130)}  #@param {type:"raw"}
+names = {0: "Entrance", 1: "Hall", 2: "Square", 3: "Gallery", 4: "Garden", 5: "Exit East", 6: "Exit North"}  #@param {type:"raw"}
+#@markdown ### 2 · Corridors (two-way), and the ones that are not 3 m wide
+corridors = ["0-1", "1-2", "1-3", "3-4", "2-4", "2-5", "4-6"]  #@param {type:"raw"}
+widths = {"1-2": 2}  #@param {type:"raw"}
+#@markdown ### 3 · Where people enter, and where they want to go
+origins = [0]  #@param {type:"raw"}
+destinations = [5, 6]  #@param {type:"raw"}
+#@markdown ### 4 · OD weights, as "origin_destination": weight (pairs you leave out get 0)
+od_weights = {"0_5": 2, "0_6": 1}  #@param {type:"raw"}
+#@markdown ### 5 · Arrival pattern: people per minute at each origin, one value per block
+arrivals_per_minute = {0: [120, 240, 120, 0]}  #@param {type:"raw"}
+block_minutes = 5  #@param {type:"slider", min:1, max:15, step:1}
+simulate_minutes = 40  #@param {type:"slider", min:10, max:120, step:5}
+
+folder = make_network(corridors, positions, origins, destinations, widths=widths, names=names,
+                      folder="my_network", minutes=simulate_minutes)
+od = {f"{o}_{d}": od_weights.get(f"{o}_{d}", 0) for o in origins for d in destinations}
+for o in origins:
+    if o not in arrivals_per_minute:
+        raise ValueError(f"Origin {o} has no arrival pattern: add it to arrivals_per_minute")
+    if not any(od[f"{o}_{d}"] for d in destinations):
+        raise ValueError(f"Origin {o}: give at least one OD weight above 0, e.g. '{o}_{destinations[0]}': 1")
+arrivals = {o: arrival_plan(plan, block_minutes) for o, plan in arrivals_per_minute.items()}
+mine = run(network_dir=folder, od=od, arrivals=arrivals)
+mine.dashboard("My network", flow=True); plt.show()
+display(mine.kpis().to_frame("value"))
+print("Which routes people chose (share per OD pair, at the junction where the routes split):")
+display(mine.route_split())'''),
+    md("""
+**Ideas to try**
+* **Same people, different timing.** Arrivals `{0: [480, 0, 0, 0]}` and `{0: [120, 120, 120, 120]}` bring
+  the same number of people. Which has fewer person-hours? Now look at *turned away*: is fewer
+  person-hours always better?
+* **Push people around.** Make the Gallery corridor `"1-3"` narrow (`widths = {"1-2": 2, "1-3": 1}`).
+  How does the route split change? Does the crowd simply move somewhere else?
+* **A second entrance.** Add a Side Gate north of the Gallery:
+  * `positions`: add `7: (60, 130)`, and `names`: add `7: "Side Gate"`
+  * `corridors`: add `"3-7"`, `origins = [0, 7]`
+  * `od_weights`: add `"7_5": 1, "7_6": 1`, and `arrivals_per_minute`: add `7: [120, 240, 120, 0]`
+
+  Now choose the OD weights so the two streams **cross head-on**, as in section 5.
+* **Your own place.** Sketch a station, a stadium or your campus on paper, number the junctions,
+  measure rough positions in metres, and type it in. Start with one origin and one destination.
+"""),
+    form('''#@title 🎬 Animate your network (optional, ≈15 s) {display-mode: "form"}
+display(mine.animate(every=3))'''),
+    md("""
+### Your network is a real PedNStream network
+`make_network` wrote a folder `my_network/` with a `sim_params.yaml`, the file PedNStream reads. Everything
+you set above is in it, plus defaults you can change (walking speed, densities, route-choice settings).
+In **Part 4** you'll write such a file yourself and run PedNStream directly.
+"""),
+    form('''#@title ▶ Show my sim_params.yaml {display-mode: "form"}
+print(open("my_network/sim_params.yaml").read())'''),
+    md("""
+---
 ## Take-away
-* An OD weight sets **where** people want to go, not **how many** there are.
-* Two OD patterns with the same destination totals can behave very differently: when routes **overlap**
-  and walkers meet **head-on**, corridors jam.
+* PedNStream tracks how many people are on each corridor. Every 10 s people **arrive** (arrival pattern),
+  get a **destination** (OD weights), pick a **route** (distance, width, crowding) and **walk** at a speed
+  set by the density.
+* A corridor can pass only so many people per minute. Above that a **queue** forms and grows **backwards**.
+* An OD weight sets **where** people want to go, not **how many** there are. Two OD patterns with the same
+  totals can behave very differently: when routes **overlap** and walkers meet **head-on**, corridors jam.
+* The same model runs a single corridor, a station and a city centre, and any network you can sketch.
 
 ➡ Next: **Part 2 · Playground**: change the OD weights, the demand, how much people avoid crowds and
 the width of corridor 2_3 yourself. Then **Part 3 · Challenge**.

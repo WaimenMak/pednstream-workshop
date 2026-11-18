@@ -14,7 +14,9 @@ from .tools import (
     arrival_plan,
     compare,
     compare_maps,
+    make_network,
     playground,
+    plot_speed_density,
     ramp,
     route_plan,
     routes,
@@ -24,7 +26,7 @@ from .tools import (
     widen,
 )
 
-__version__ = "1.11.0"
+__version__ = "1.12.0"
 
 __all__ = [
     "AMSTERDAM",
@@ -35,7 +37,9 @@ __all__ = [
     "arrival_plan",
     "compare",
     "compare_maps",
+    "make_network",
     "playground",
+    "plot_speed_density",
     "ramp",
     "route_plan",
     "routes",
