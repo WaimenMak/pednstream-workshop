@@ -124,246 +124,94 @@ def write(name, cells):
     nbf.write(nb, OUT / name)
 
 
-SCENARIOS = '''{
-    "baseline (everyone 50/50)":        {"0_5": 1, "0_6": 1, "1_5": 1, "1_6": 1},
-    "all to Platform X":                {"0_5": 1, "0_6": 0, "1_5": 1, "1_6": 0},
-    "all to City Exit Y":               {"0_5": 0, "0_6": 1, "1_5": 0, "1_6": 1},
-    "crossing (A to X, B to Y)":        {"0_5": 1, "0_6": 0, "1_5": 0, "1_6": 1},
-    "parallel (A to Y, B to X)":        {"0_5": 0, "0_6": 1, "1_5": 1, "1_6": 0},
-}'''
-
 # =============================================================================
 # 01 guided
 # =============================================================================
 write("01_od_weights_guided.ipynb", [
     md(f"""
 # Part 1 · Where do people want to go?
-### OD weights and how pedestrian flows spread through a network
+### A quick first run: OD weights and where crowds form
 
-You'll change **who wants to go where** in a small station and watch *where* and *when* crowds form.
-Work in pairs: one person clicks, the other takes notes. Swap every exercise.
-
+In about 15 minutes you run a small station a few times and see one big idea:
+**who goes where** matters as much as **how many** people there are.
+Work in pairs: one person clicks, the other takes notes.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, compare, compare_maps, switch", min_version="1.7.0"),
+    *setup("from pednstream_workshop import run, compare, compare_maps", min_version="1.7.0"),
     md(f"""
-## 0 · Meet *Station Square*
+## 1 · Meet *Station Square*
 {MAP}
-* **Two entrances** (green squares): West Gate **A** enters at the Plaza, South Gate **B** enters at the Hall.
-* **Two destinations** (red diamonds): the **Platform X** and the **City Exit Y**.
-* Corridor **2_3** (Plaza–Hall) is only **2 m** wide.
+* **Two entrances**: West Gate **A** enters at the Plaza, South Gate **B** enters at the Hall.
+* **Two destinations**: the **Platform X** and the **City Exit Y**.
+* Corridor **2_3** (Plaza–Hall) is narrow: only **2 m** wide.
 * A rush of people arrives at both gates, peaking around minute 17. The rush is **the same in every run**.
+* Where there are two routes, people choose by **distance**, **crowding** and **width**.
 """),
     md("""
-## What is an OD weight?
+## 2 · What is an OD weight?
 An **OD weight** says how strongly the people entering at a gate (the *origin*) are drawn to each
-*destination*. Weights are **relative**: `3` and `1` mean "three times as attracted to the Platform as
-to the City Exit". How *many* people enter is set by the gate's demand; the weights decide where they head.
+*destination*. Weights are **relative**: `3` and `1` mean "three times as many head to the Platform as
+to the City Exit". The gate's demand sets how *many* people enter; the weights only decide where they head.
 
-The cell below opens **only Gate A** and runs the simulation. PedNStream's **OD tracker** follows every
-person from their gate to their destination, so you can read three things straight from the simulation:
-the split PedNStream makes from your weights, the destinations it gave people at the gate, and where
-they had arrived when the clock stopped.
+The cell below opens **only Gate A**. Press ▶, then move the sliders and press ▶ again.
 """),
-    form('''#@title ▶ What is an OD weight? Try it {display-mode: "form"}
+    form('''#@title ▶ Try OD weights for Gate A {display-mode: "form"}
 weight_A_to_Platform = 3  #@param {type:"slider", min:0, max:10, step:1}
 weight_A_to_CityExit = 1  #@param {type:"slider", min:0, max:10, step:1}
-only_A = run(od={"0_5": weight_A_to_Platform, "0_6": weight_A_to_CityExit}, origins=[0])   # only Gate A open
+only_A = run(od={"0_5": weight_A_to_Platform, "0_6": weight_A_to_CityExit}, origins=[0])
 
-# PedNStream's OD tracker follows every person from their gate to their destination
-tracker = only_A.network.od_tracker
-X, Y = tracker.index[(0, 5)], tracker.index[(0, 6)]
-asked = tracker.origin_mix(0, 0)[X]               # the split PedNStream makes from your weights
-od = tracker.od_table()                           # people per OD pair: entered, arrived, still inside
-ent_x, ent_y = od[(0, 5)]["entered"], od[(0, 6)]["entered"]
-arr_x, arr_y = od[(0, 5)]["arrived"], od[(0, 6)]["arrived"]
-given = ent_x / max(ent_x + ent_y, 1e-9)
-got = arr_x / max(arr_x + arr_y, 1e-9)
-
-print(f"The weights ask for:      {asked:.0%} → Platform X,  {1 - asked:.0%} → City Exit Y")
-print(f"Given at the gate:        {given:.0%} → Platform X,  {1 - given:.0%} → City Exit Y"
-      f"   ({ent_x:.0f} and {ent_y:.0f} people)")
-print(f"Arrived by the end:       {got:.0%} → Platform X,  {1 - got:.0%} → City Exit Y"
-      f"   ({arr_x:.0f} and {arr_y:.0f} people; {od[(0, 5)]['inside'] + od[(0, 6)]['inside']:.0f} still walking)")
-plt.figure(figsize=(7, 2.3))
-for row, share in [(2, asked), (1, given), (0, got)]:
-    plt.barh([row], [share], color="#1565c0"); plt.barh([row], [1 - share], left=[share], color="#ef6c00")
-    plt.text(share / 2, row, f"{share:.0%}", ha="center", va="center", color="white")
-plt.yticks([2, 1, 0], ["weights ask", "given at the gate", "arrived"]); plt.xlim(0, 1)
-plt.title("Gate A: Platform X (blue) / City Exit Y (orange)"); plt.show()'''),
+od = only_A.network.od_tracker.od_table()        # PedNStream follows every person from gate to destination
+to_x, to_y = od[(0, 5)]["entered"], od[(0, 6)]["entered"]
+share = to_x / max(to_x + to_y, 1e-9)
+print(f"Gate A sent {share:.0%} to Platform X ({to_x:.0f} people) "
+      f"and {1 - share:.0%} to City Exit Y ({to_y:.0f} people)")'''),
     md("""
-> **Quick check 1:** weights 10 & 10 versus 1 & 1. Same result or different?
+> **Try:** 1 & 1, then 10 & 10. Same or different? Then 1 & 0.
 >
-> **Quick check 2:** try 1 & 0, then 3 & 1. *Given at the gate* matches the weights exactly: PedNStream
-> gives every person who enters a destination drawn from the OD weights and **keeps track of it**, so at
-> every junction people turn towards their *own* destination. *Arrived* counts are a bit lower, because
-> some people are still walking when the clock stops. Keep this in mind: in
-> this model the weights decide **where** people go; the simulation decides **how** (which route) and
-> **when** they get there.
+> Every person who enters gets a destination drawn from the weights and keeps it all the way.
+> **The weights decide where people go; the simulation decides which route they take and when they arrive.**
 
 ---
-## 0b · Under the hood: a PedNStream simulation in four steps
-Every ▶ button in this workshop calls `run(...)`, a thin wrapper around **PedNStream**. Here is the
-same simulation once in plain PedNStream code, so you know what each button does and can reuse it
-in your own work (Part 4 goes further). Run the four cells in order.
-
-**Step 1 · Describe the network.** A PedNStream network is a folder with a `sim_params.yaml`:
-the nodes and corridors, the link properties, the demand at each origin and the OD weights.
-"""),
-    code('''from pednstream.utils.network_env_generator import NetworkEnvGenerator
-from pednstream_workshop import DEFAULT_NETWORK      # the folder that holds Station Square
-
-print((DEFAULT_NETWORK / "sim_params.yaml").read_text())'''),
-    md("""
-**Step 2 · Build the network.** `NetworkEnvGenerator` reads the folder and creates a `Network`.
-You can override parts of the YAML from code. Here we set the **OD weights** with
-`od_flows={(origin, destination): weight}`.
-"""),
-    code('''gen = NetworkEnvGenerator()
-net = gen.create_network(
-    str(DEFAULT_NETWORK),
-    od_flows={(0, 5): 1, (0, 6): 1,     # Gate A: drawn equally to Platform X and City Exit Y
-              (1, 5): 1, (1, 6): 1},    # Gate B: the same
-    verbose=False,
-)
-T = gen.config["params"]["simulation_steps"]           # 300 steps of 10 s = 50 minutes
-print(f"Built a network with {len(net.nodes)} nodes and {len(net.links)} directed links; {T} time steps")'''),
-    md("""
-**Step 3 · Run it.** The simulation advances one time step per call of `network_loading(t)`.
-"""),
-    code('''for t in range(1, T):
-    net.network_loading(t)
-print("Done:", T - 1, "steps simulated")'''),
-    md("""
-**Step 4 · Read the results.** Every directed corridor `(u, v)` is a `Link` object in `net.links`
-with numpy arrays over time: `density`, `speed`, `num_pedestrians`, `inflow`, `outflow`,
-`cumulative_inflow`, `cumulative_outflow`, …
-"""),
-    code('''import numpy as np
-
-minutes = np.arange(T) * 10 / 60
-plt.figure(figsize=(8, 3))
-for (u, v) in [(0, 2), (1, 3), (2, 3), (3, 2), (2, 4)]:
-    plt.plot(minutes, net.links[(u, v)].density[:T], label=f"{u}→{v}")
-plt.axhline(2, ls="--", c="grey"); plt.xlabel("minute"); plt.ylabel("density (ped/m²)")
-plt.title("Density on a few corridors, read straight from PedNStream"); plt.legend(); plt.show()
-
-print("People who walked 3→5 into Platform X:", round(net.links[(3, 5)].cumulative_outflow[T - 1]))
-print("People who walked 4→6 into City Exit Y:", round(net.links[(4, 6)].cumulative_outflow[T - 1]))'''),
-    md("""
-**That's all `run()` does.** It repeats steps 1–3 with your settings and wraps the network in a
-`Result` that has the plotting helpers. Read its source below: `od` becomes `od_flows`,
-`links` becomes `link_params_overrides`, and so on.
-The PedNStream network is still inside every result as `result.network`, so you can always go back
-to the raw arrays, e.g. `base.network.links[(2, 3)].density`.
-"""),
-    code('''import inspect
-from pednstream_workshop import run
-print(inspect.getsource(run))'''),
-    md("""
-From here on we use the ▶ buttons so you can focus on the flows, not the code.
-"""),
-    form('''#@title ▶ Run the baseline (all weights equal) {display-mode: "form"}
-base = run()
-base.dashboard("Baseline: both gates drawn equally to X and Y"); plt.show()
-display(base.kpis().to_frame("baseline"))'''),
-    md("""
-**How to read this**
-* **Map**: corridor colour = density (people per m²) at the busiest moment. Above **2** (dashed line) a corridor is *congested* and people slow down sharply.
-* **Density per corridor**: when and where crowds build up and clear.
-* **Arrivals**: people reaching each destination over time. *Turned away* = people who couldn't even enter because the first corridor was full.
-* **time spent inside (person-hours)**: our main "how bad was it" number. **Lower is better.**
-
----
-## Exercise 1 · Everyone to one destination
-A train is delayed, and **everyone** heads to the Platform X. Or a concert is on in town and **everyone** heads to the City Exit Y.
-"""),
-    form('''#@title ▶ Run Exercise 1 {display-mode: "form"}
-all_x = run(od={"0_5": 1, "0_6": 0, "1_5": 1, "1_6": 0})
-all_y = run(od={"0_5": 0, "0_6": 1, "1_5": 0, "1_6": 1})
-display(compare({"baseline": base, "all to X": all_x, "all to Y": all_y}))
-compare_maps({"baseline": base, "all to X": all_x, "all to Y": all_y}); plt.show()
-print("How 'all to X' travellers split over their routes:")
-display(all_x.route_split())'''),
-    md("""
-**Discuss**
-1. In *all to X*, people are turned away at **Gate B**. Why B and not A? *(Hint: count B's routes to X in the table.)*
-2. The narrow corridor 2_3 is *not* the worst. Where did the crowd go instead, and why?
-
----
-## Exercise 2 · Same totals, different mix ⭐
-In both scenarios one gate is drawn to X and the other to Y, so **on paper** half of all travellers go
-to each destination. Only *who* goes where differs:
+## 3 · Same totals, different mix ⭐
+Now both gates are open. Three ways to divide the travellers, and in all three **half of all travellers
+go to each destination**. Only *who* goes where differs:
 
 | scenario | Gate A goes to | Gate B goes to |
 |---|---|---|
+| **baseline** | half X, half Y | half X, half Y |
 | **crossing** | Platform X (east) | City Exit Y (north) |
 | **parallel** | City Exit Y (north) | Platform X (east) |
+
+Guess first with your partner: will the three behave the same? Then press ▶.
 """),
-    form('''#@title ▶ Run Exercise 2 {display-mode: "form"}
+    form('''#@title ▶ Run the three scenarios {display-mode: "form"}
+base = run()
 crossing = run(od={"0_5": 1, "0_6": 0, "1_5": 0, "1_6": 1})
 parallel = run(od={"0_5": 0, "0_6": 1, "1_5": 1, "1_6": 0})
-display(compare({"baseline": base, "crossing": crossing, "parallel": parallel}))
-compare_maps({"crossing": crossing, "parallel": parallel}); plt.show()
-print("Crossing scenario, corridor by corridor:")
-display(crossing.link_table())'''),
+runs = {"baseline": base, "crossing": crossing, "parallel": parallel}
+compare_maps(runs); plt.show()
+display(compare(runs))'''),
     md("""
-**Discuss**
-1. Destination totals are identical, yet one scenario costs much more. Explain why in one sentence, using *route overlap* or *counter-flow*.
-2. Knowing only "50% go to the Platform", could you have predicted the congestion?
-3. Look at *reached Platform X* in the table: both scenarios deliver (almost) the same totals, so the whole
-   difference is in *how* people get there. In the crossing scenario, which corridors do the two gates'
-   walkers share, and do they walk in the same direction? *(Hint: the corridor table above.)*
+**How to read this**
+* **Map**: corridor colour = the highest density (people per m²) during the run. Above **2** (yellow,
+  then orange and red) people slow down sharply.
+* **time spent inside (person-hours)**: the main "how bad was it" number. **Lower is better.**
+* **turned away**: people who could not even enter because the first corridor was full.
+
+**Discuss with your partner**
+1. *reached Platform X* is about the same in all three, so why does one scenario cost so much more time?
+   *(Hint: compare corridor 2_3 on the crossing and parallel maps. In the crossing scenario Gate A's
+   walkers cross it eastwards to the Platform. Which way do Gate B's walkers to the City Exit go?)*
+2. Knowing only "50% go to the Platform", could you have predicted this?
 
 ---
-## Exercise 3 · Destinations that change over time
-A train is announced, and from that moment people become much more likely to head to the Platform.
-"""),
-    form('''#@title ▶ Run Exercise 3 {display-mode: "form"}
-announcement_minute = 25  #@param {type:"slider", min:0, max:49, step:1}
-times_more_likely_to_go_to_Platform = 6  #@param {type:"slider", min:1, max:10, step:1}
-step = int(announcement_minute * 6)       # 1 step = 10 s
-k = times_more_likely_to_go_to_Platform
-announce = run(od={"0_5": switch(1, k, at_step=step), "0_6": 1,
-                   "1_5": switch(1, k, at_step=step), "1_6": 1})
-ax = announce.plot_links(["0_2", "2_3", "3_5", "2_4", "4_6"], title=f"Announcement at minute {announcement_minute}")
-ax.axvline(announcement_minute, color="k", lw=2, alpha=0.4); plt.show()
-display(compare({"baseline": base, f"announced at min {announcement_minute}": announce}))'''),
-    md("""
-**Discuss**
-1. Look at the vertical line. Do the corridors react with a delay, or all at once?
-2. In PedNStream every person keeps the destination they got at the gate, so only people who enter
-   **after** the announcement head for the Platform. Is that realistic for a departure board visible only
-   at the entrance? For a loudspeaker announcement that everyone inside hears?
-3. Try the announcement at minute **17** (the peak) and at minute **35**. Does *timing* matter as much as *size*?
+## Take-away
+* An OD weight sets **where** people want to go, not **how many** there are.
+* Two OD patterns with the same destination totals can behave very differently: when routes **overlap**
+  and walkers meet **head-on**, corridors jam.
 
----
-## Exercise 4 · Do people dodge the jam?
-People choose between two routes using **distance**, **crowding** and **width**.
-**β (beta)** is how strongly people avoid crowds: 0 = they ignore crowding, 10 = they avoid it strongly.
-"""),
-    form(f'''#@title ▶ Run Exercise 4 {{display-mode: "form"}}
-scenario = "crossing (A to X, B to Y)"  #@param ["baseline (everyone 50/50)", "all to Platform X", "all to City Exit Y", "crossing (A to X, B to Y)", "parallel (A to Y, B to X)"]
-beta_crowd_avoidance = 8  #@param {{type:"slider", min:0, max:10, step:0.5}}
-width_of_corridor_2_3_m = 2  #@param {{type:"slider", min:1, max:6, step:0.5}}
-od = {SCENARIOS}[scenario]
-default = run(od=od)
-changed = run(od=od, route_choice={{"beta": beta_crowd_avoidance}}, links={{"2_3": {{"width": width_of_corridor_2_3_m}}}})
-label = f"β={{beta_crowd_avoidance}}, 2_3 = {{width_of_corridor_2_3_m}} m"
-display(compare({{"default (β=2, 2_3 = 2 m)": default, label: changed}}))
-compare_maps({{"default": default, label: changed}}); plt.show()'''),
-    md("""
-**Discuss**
-1. Raising β changes the *peak density* more than the *total time*. Why can't smart walkers fix a bad OD pattern on their own?
-2. Which helps more here: better behaviour (β), a wider corridor, or a different OD mix (Exercise 2)?
-
----
-## Wrap-up: complete these three sentences with your partner
-1. An OD weight controls …
-2. Two OD patterns with the same destination totals can behave differently because …
-3. When OD weights change over time, the network …
-
-➡ Next: **Part 2 · Playground**, then **Part 3 · Challenge**.
+➡ Next: **Part 2 · Playground**: change the OD weights, the demand, how much people avoid crowds and
+the width of corridor 2_3 yourself. Then **Part 3 · Challenge**.
 """),
 ])
 

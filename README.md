@@ -23,7 +23,7 @@ Nothing to install. Sign in with a Google account, run the first cell, and follo
 
 | Part | What you do | Time | |
 |---|---|---|---|
-| 1 · Guided exercises | Run and explain: four exercises with sliders | ~50 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/01_od_weights_guided.ipynb) |
+| 1 · First run | A quick guided run: what an OD weight is, and why *who goes where* matters | ~15 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/01_od_weights_guided.ipynb) |
 | 2 · Playground | Free exploration: OD weights, demand, route choice, width | ~20 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/02_playground.ipynb) |
 | 3 · Challenge | Plan an event day from Amsterdam Centraal to Museumplein: arrival pattern and route closures | ~30 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/03_challenge.ipynb) |
 | 4 · Your own research | Use PedNStream directly: your own network, overrides, a parameter sweep | ~30 min | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/WaimenMak/pednstream-workshop/blob/main/notebooks/04_pednstream_in_your_research.ipynb) |
@@ -92,7 +92,7 @@ run(od={"0_5": 3, "0_6": 1}, origins=[0])                # only Gate A open
 compare({"name 1": res1, "name 2": res2})                # KPI table side by side
 ```
 
-`run()` is a thin wrapper. The same simulation in plain PedNStream (Part 1, section 0b):
+`run()` is a thin wrapper. The same simulation in plain PedNStream (Part 4 walks through it):
 ```python
 from pednstream.utils.network_env_generator import NetworkEnvGenerator
 from pednstream_workshop import DEFAULT_NETWORK
