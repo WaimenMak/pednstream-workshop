@@ -315,13 +315,13 @@ All 5 start at Stationsplein, so stewards there can send people away from a rout
 * Post your best score on the leaderboard.
 {HOW_TO}
 """),
-    *setup("from pednstream_workshop import run, AMSTERDAM, arrival_plan, route_plan, show_routes", min_version="1.9.0"),
+    *setup("from pednstream_workshop import run, AMSTERDAM, arrival_plan, route_plan, show_routes", min_version="1.10.0"),
     md("""
 ## ▶ Step 2: load the Amsterdam tools and look at the 5 routes
 Routes that share a street run side by side on this map. The route numbers are the ones you open and close below.
-Keep the colours in mind: on your results, each of the most crowded streets is drawn in the colour of
-**its route** and named with it ("Rokin · route 1"); grey means several routes share that street.
-So you can see straight away which route a jam is on.
+Keep the colours in mind: on your results, the density chart has **one line per route** in these
+colours (the average density over all of that route's streets), and the map names the most crowded
+streets with their route ("Rokin · route 1"; grey = several routes share it).
 """),
     code('''import pandas as pd
 from pednstream_workshop import AMSTERDAM, arrival_plan, route_plan, routes, show_routes
