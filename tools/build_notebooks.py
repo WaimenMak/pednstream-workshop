@@ -122,13 +122,6 @@ def write(name, cells):
     nbf.write(nb, OUT / name)
 
 
-def predict_form(title, question):
-    return form(f'''#@title ✋ **Predict first**: {title} {{ display-mode: "form" }}
-#@markdown {question}
-my_prediction = ""  #@param {{type:"string"}}
-print("Saved your prediction:", my_prediction or "(empty, please type one above and run again)")''')
-
-
 SCENARIOS = '''{
     "baseline (everyone 50/50)":        {"0_5": 1, "0_6": 1, "1_5": 1, "1_6": 1},
     "all to Platform X":                {"0_5": 1, "0_6": 0, "1_5": 1, "1_6": 0},
@@ -146,7 +139,7 @@ write("01_od_weights_guided.ipynb", [
 ### OD weights and how pedestrian flows spread through a network
 
 You'll change **who wants to go where** in a small station and watch *where* and *when* crowds form.
-Work in pairs: one person clicks, the other writes down predictions. Swap every exercise.
+Work in pairs: one person clicks, the other takes notes. Swap every exercise.
 
 {HOW_TO}
 """),
@@ -273,7 +266,6 @@ display(base.kpis().to_frame("baseline"))'''),
 ## Exercise 1 · Everyone to one destination
 A train is delayed, and **everyone** heads to the Platform X. Or a concert is on in town and **everyone** heads to the City Exit Y.
 """),
-    predict_form("Exercise 1", "Which corridor will be worst in each case? Which case is worse overall?"),
     form('''#@title ▶ Run Exercise 1 {display-mode: "form"}
 all_x = run(od={"0_5": 1, "0_6": 0, "1_5": 1, "1_6": 0})
 all_y = run(od={"0_5": 0, "0_6": 1, "1_5": 0, "1_6": 1})
@@ -296,7 +288,6 @@ to each destination. Only *who* goes where differs:
 | **crossing** | Platform X (east) | City Exit Y (north) |
 | **parallel** | City Exit Y (north) | Platform X (east) |
 """),
-    predict_form("Exercise 2", "Will the two scenarios give (almost) the same result? If not, which is worse, and where?"),
     form('''#@title ▶ Run Exercise 2 {display-mode: "form"}
 crossing = run(od={"0_5": 1, "0_6": 0, "1_5": 0, "1_6": 1})
 parallel = run(od={"0_5": 0, "0_6": 1, "1_5": 1, "1_6": 0})
@@ -316,7 +307,6 @@ display(crossing.link_table())'''),
 ## Exercise 3 · Destinations that change over time
 A train is announced, and from that moment people become much more likely to head to the Platform.
 """),
-    predict_form("Exercise 3", "People already walking to the City Exit when the announcement comes: do they keep going or turn around? Does the timing of the announcement matter?"),
     form('''#@title ▶ Run Exercise 3 {display-mode: "form"}
 announcement_minute = 25  #@param {type:"slider", min:0, max:49, step:1}
 times_more_likely_to_go_to_Platform = 6  #@param {type:"slider", min:1, max:10, step:1}
@@ -340,7 +330,6 @@ display(compare({"baseline": base, f"announced at min {announcement_minute}": an
 People choose between two routes using **distance**, **crowding** and **width**.
 **β (beta)** is how strongly people avoid crowds: 0 = they ignore crowding, 10 = they avoid it strongly.
 """),
-    predict_form("Exercise 4", "For the bad crossing pattern, will people avoiding crowds (high β) fix the problem? Will a wider corridor?"),
     form(f'''#@title ▶ Run Exercise 4 {{display-mode: "form"}}
 scenario = "crossing (A to X, B to Y)"  #@param ["baseline (everyone 50/50)", "all to Platform X", "all to City Exit Y", "crossing (A to X, B to Y)", "parallel (A to Y, B to X)"]
 beta_crowd_avoidance = 8  #@param {{type:"slider", min:0, max:10, step:0.5}}
