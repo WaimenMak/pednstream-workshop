@@ -158,36 +158,46 @@ An **OD weight** says how strongly the people entering at a gate (the *origin*) 
 *destination*. Weights are **relative**: `3` and `1` mean "three times as attracted to the Platform as
 to the City Exit". How *many* people enter is set by the gate's demand; the weights decide where they head.
 
-The cell below opens **only Gate A**, runs the simulation and counts where Gate A's people actually
-come out. Compare that with the split the weights ask for.
+The cell below opens **only Gate A** and runs the simulation. PedNStream's **OD tracker** follows every
+person from their gate to their destination, so you can read three things straight from the simulation:
+the split PedNStream makes from your weights, the destinations it gave people at the gate, and where
+they had arrived when the clock stopped.
 """),
     form('''#@title ▶ What is an OD weight? Try it {display-mode: "form"}
 weight_A_to_Platform = 3  #@param {type:"slider", min:0, max:10, step:1}
 weight_A_to_CityExit = 1  #@param {type:"slider", min:0, max:10, step:1}
-wX, wY = weight_A_to_Platform, weight_A_to_CityExit
-asked = wX / (wX + wY) if wX + wY else 0.5        # both 0: no preference, PedNStream uses 50 / 50
+only_A = run(od={"0_5": weight_A_to_Platform, "0_6": weight_A_to_CityExit}, origins=[0])   # only Gate A open
 
-only_A = run(od={"0_5": wX, "0_6": wY}, origins=[0])   # Gate A is the only gate open
-x, y = only_A.arrivals(5)[-1], only_A.arrivals(6)[-1]
-got = x / (x + y)
+# PedNStream's OD tracker follows every person from their gate to their destination
+tracker = only_A.network.od_tracker
+X, Y = tracker.index[(0, 5)], tracker.index[(0, 6)]
+asked = tracker.origin_mix(0, 0)[X]               # the split PedNStream makes from your weights
+od = tracker.od_table()                           # people per OD pair: entered, arrived, still inside
+ent_x, ent_y = od[(0, 5)]["entered"], od[(0, 6)]["entered"]
+arr_x, arr_y = od[(0, 5)]["arrived"], od[(0, 6)]["arrived"]
+given = ent_x / max(ent_x + ent_y, 1e-9)
+got = arr_x / max(arr_x + arr_y, 1e-9)
 
 print(f"The weights ask for:      {asked:.0%} → Platform X,  {1 - asked:.0%} → City Exit Y")
-print(f"The simulation delivered: {got:.0%} → Platform X,  {1 - got:.0%} → City Exit Y"
-      f"   ({x:.0f} and {y:.0f} people)")
-plt.figure(figsize=(7, 1.8))
-for row, share in [(1, asked), (0, got)]:
+print(f"Given at the gate:        {given:.0%} → Platform X,  {1 - given:.0%} → City Exit Y"
+      f"   ({ent_x:.0f} and {ent_y:.0f} people)")
+print(f"Arrived by the end:       {got:.0%} → Platform X,  {1 - got:.0%} → City Exit Y"
+      f"   ({arr_x:.0f} and {arr_y:.0f} people; {od[(0, 5)]['inside'] + od[(0, 6)]['inside']:.0f} still walking)")
+plt.figure(figsize=(7, 2.3))
+for row, share in [(2, asked), (1, given), (0, got)]:
     plt.barh([row], [share], color="#1565c0"); plt.barh([row], [1 - share], left=[share], color="#ef6c00")
     plt.text(share / 2, row, f"{share:.0%}", ha="center", va="center", color="white")
-plt.yticks([1, 0], ["weights ask", "simulation"]); plt.xlim(0, 1)
+plt.yticks([2, 1, 0], ["weights ask", "given at the gate", "arrived"]); plt.xlim(0, 1)
 plt.title("Gate A: Platform X (blue) / City Exit Y (orange)"); plt.show()'''),
     md("""
 > **Quick check 1:** weights 10 & 10 versus 1 & 1. Same result or different?
 >
-> **Quick check 2:** try 1 & 0, then 3 & 1. The simulation delivers (almost) exactly what the weights ask.
-> That's because PedNStream gives every person who enters a destination drawn from the OD weights and
-> **keeps track of it**: at every junction people turn towards their *own* destination. The small
-> differences come from moving whole people per 10-second step. Keep this in mind: in this model the
-> weights decide **where** people go; the simulation decides **how** (which route) and **when** they get there.
+> **Quick check 2:** try 1 & 0, then 3 & 1. *Given at the gate* matches the weights exactly: PedNStream
+> gives every person who enters a destination drawn from the OD weights and **keeps track of it**, so at
+> every junction people turn towards their *own* destination. *Arrived* counts are a bit lower, because
+> some people are still walking when the clock stops. Keep this in mind: in
+> this model the weights decide **where** people go; the simulation decides **how** (which route) and
+> **when** they get there.
 
 ---
 ## 0b · Under the hood: a PedNStream simulation in four steps
