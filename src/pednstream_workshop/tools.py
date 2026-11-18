@@ -77,6 +77,11 @@ CORRIDORS = ["0_2", "1_3", "2_3", "2_4", "3_4", "3_5", "4_6"]
 # ----------------------------------------------------------------------------
 # Input helpers
 # ----------------------------------------------------------------------------
+ROUTE_COLOURS = plt.get_cmap("tab10").colors   # route r is drawn in ROUTE_COLOURS[r - 1]
+SHARED_COLOUR = "#424242"                      # a street that several routes use
+LINE_STYLES = ["-", "--", ":", "-."]           # to tell apart streets of the same colour
+
+
 def _parse_key(key) -> tuple:
     if isinstance(key, tuple):
         return tuple(int(k) for k in key)
@@ -347,11 +352,10 @@ def show_routes(network_dir: Path | str = AMSTERDAM, ax=None):
     other = _other_streets(network_dir)
     segs = [[pos[int(a)], pos[int(b)]] for a, b in (k.split("_") for k in names["streets"])] + other
     ax.add_collection(LineCollection(segs, colors="#9e9e9e", linewidths=0.6, alpha=0.7, zorder=1))
-    colours = plt.get_cmap("tab10").colors
     for i, (number, row) in enumerate(table.iterrows()):
         off = (i - (len(table) - 1) / 2) * 14   # metres: so routes sharing a street stay visible
         xy = np.array([pos[n] for n in row["nodes"]]) + off
-        ax.plot(xy[:, 0], xy[:, 1], color=colours[i % 10], lw=3, alpha=0.9, zorder=2,
+        ax.plot(xy[:, 0], xy[:, 1], color=ROUTE_COLOURS[i % 10], lw=3, alpha=0.9, zorder=2,
                 label=f"route {number}: {row['via']} ({row['length (m)'] / 1000:.1f} km)")
     for n, (x, y) in pos.items():
         if n in names["minor"]:
@@ -413,8 +417,24 @@ class Result:
         street = self.names["streets"].get(c)
         return f"{c} {street}" if street else c
 
+    def route_numbers(self, corridor: str) -> list:
+        """The routes (numbered as in `routes()` and `open_routes`) that use a corridor 'u_v'.
+        Empty unless the network has a single OD pair, where route numbers are unambiguous."""
+        if not hasattr(self, "_route_numbers"):
+            paths = list(self.network.path_finder.od_paths.values())
+            on = {}
+            if len(paths) == 1:
+                for r, path in enumerate(paths[0], start=1):
+                    for a, b in zip(path, path[1:]):
+                        on.setdefault(f"{min(a, b)}_{max(a, b)}", set()).add(r)
+            self._route_numbers = {c: sorted(rs) for c, rs in on.items()}
+        return self._route_numbers.get(corridor, [])
+
     def busiest_streets(self, n: int = 5) -> list:
-        """The n streets with the highest peak density, as [(street, its most crowded corridor, colour)].
+        """The n streets with the highest peak density, as [(label, its most crowded corridor, colour, line style)].
+
+        With numbered routes the colour is that of the route using the street (as in `show_routes`), or
+        dark grey when several routes share it, and the label names the route(s): "Rokin · route 1".
         The density chart and the map use the same list and colours, so every street in the legend
         is also labelled on the map."""
         if not hasattr(self, "_busiest"):
@@ -427,8 +447,19 @@ class Result:
                 if peak > best.get(street, ("", -1.0))[1]:
                     best[street] = (c, peak)
             ranked = [s for s in sorted(best, key=lambda s: -best[s][1]) if best[s][1] > 0.1 * self.k_critical]
-            colours = plt.get_cmap("tab10").colors
-            self._busiest = [(s, best[s][0], colours[i % 10]) for i, s in enumerate(ranked[:10])]
+            self._busiest, used = [], {}
+            for i, s in enumerate(ranked[:10]):
+                c = best[s][0]
+                on = self.route_numbers(c)
+                if not on:
+                    label, colour = s, ROUTE_COLOURS[i % 10]
+                elif len(on) == 1:
+                    label, colour = f"{s} · route {on[0]}", ROUTE_COLOURS[(on[0] - 1) % 10]
+                else:
+                    label, colour = f"{s} · routes {'+'.join(map(str, on))}", SHARED_COLOUR
+                style = LINE_STYLES[used.get(colour, 0) % len(LINE_STYLES)]
+                used[colour] = used.get(colour, 0) + 1
+                self._busiest.append((label, c, colour, style))
         return self._busiest[:n]
 
     @property
@@ -640,7 +671,7 @@ class Result:
             ys = _map_points(self.pos, self.other_streets)[1]
             gap = 0.06 * (max(ys) - min(ys))
             labels = []
-            for street, c, colour in self.busiest_streets():
+            for street, c, colour, _ in self.busiest_streets():
                 u, v = _parse_key(c)
                 (x1, y1), (x2, y2) = self.pos[u], self.pos[v]
                 labels.append((street, colour, ((x1 + x2) / 2, (y1 + y2) / 2)))
@@ -669,8 +700,8 @@ class Result:
         if corridors is None and self.names["streets"] and len(self.corridors) > 20:
             # big network: the busiest streets only, each as the density on its most crowded
             # stretch (the one labelled on the map, in the same colour)
-            for street, c, colour in self.busiest_streets():
-                ax.plot(minutes, self.density(c), color=colour, lw=2, label=street)
+            for street, c, colour, style in self.busiest_streets():
+                ax.plot(minutes, self.density(c), color=colour, ls=style, lw=2, label=street)
             corridors = []
         elif corridors is None:
             corridors = self.corridors
@@ -680,8 +711,13 @@ class Result:
         ax.set_xlabel("minute")
         ax.set_ylabel("density (ped/m²)")
         ax.legend(ncol=4, fontsize=8)
-        ax.set_title(title or ("Density on the most crowded streets (labelled on the map)" if not corridors
-                               else "Density per corridor"))
+        if corridors:
+            default_title = "Density per corridor"
+        elif any(self.route_numbers(c) for _, c, _, _ in self.busiest_streets()):
+            default_title = "Most crowded streets, in their route's colour (grey = shared)"
+        else:
+            default_title = "Density on the most crowded streets (labelled on the map)"
+        ax.set_title(title or default_title)
         return ax
 
     def people_on(self, key: str) -> np.ndarray:
